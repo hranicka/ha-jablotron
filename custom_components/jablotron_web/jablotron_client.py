@@ -122,14 +122,17 @@ class JablotronClient:
         # Try to get data with the current session
         data = await self._fetch_status()
 
-        # Check if the session expired
+        # Check if the session expired (status == 300)
         if data and data.get("status") == 300:
-            _LOGGER.info("Session expired, logging in again")
+            _LOGGER.info("Session expired or login invalid, logging in again")
             if await self.login():
                 # Retry with a new session
                 data = await self._fetch_status()
+                if data and data.get("status") == 300:
+                    _LOGGER.error("Re-login failed, still getting status 300 from API")
+                    raise Exception("Failed to re-login to Jablotron Cloud (status 300)")
             else:
-                raise Exception("Failed to re-login to Jablotron Cloud")
+                raise Exception("Failed to re-login to Jablotron Cloud (login failed)")
 
         return data
 
@@ -153,14 +156,15 @@ class JablotronClient:
                 headers=headers,
                 cookies=cookies,
             ) as response:
-                if response.status == 200:
+                response_text = await response.text()
+                _LOGGER.debug(f"Status response: {response_text}")
+                try:
                     data = await response.json()
-                    _LOGGER.debug(f"Status data received: {data}")
-                    return data
-                else:
-                    _LOGGER.error(f"Failed to get status: {response.status}")
+                except Exception:
+                    _LOGGER.error("Failed to parse JSON from status response")
                     return {}
+                _LOGGER.debug(f"Status data received: {data}")
+                return data
         except Exception as e:
             _LOGGER.error(f"Error fetching status: {e}")
             raise
-
