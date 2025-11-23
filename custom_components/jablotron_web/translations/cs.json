@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Konfigurace Jablotron Web",
+        "description": "Zadejte přihlašovací údaje k Jablotron",
+        "data": {
+          "username": "Email",
+          "password": "Heslo",
+          "service_id": "ID služby (volitelné)"
+        }
+      },
+      "sensors": {
+        "title": "Pojmenujte teplotní čidla",
+        "description": "Upravte názvy pro {sensor_count} nalezených teplotních čidel. Můžete je také přejmenovat později v Home Assistant."
+      }
+    },
+    "error": {
+      "cannot_connect": "Nepodařilo se připojit k Jablotron Cloud",
+      "invalid_auth": "Neplatné přihlašovací údaje"
+    },
+    "abort": {
+      "reauth_successful": "Opětovné ověření bylo úspěšné"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti Jablotron Web",
+        "description": "Aktualizujte konfiguraci. Nechte heslo prázdné pro zachování stávajícího hesla.",
+        "data": {
+          "username": "Email",
+          "password": "Heslo (nechte prázdné pro zachování současného)",
+          "service_id": "ID služby",
+          "scan_interval": "Interval aktualizace (sekundy)"
+        }
+      }
+    }
+  }
+}
+
