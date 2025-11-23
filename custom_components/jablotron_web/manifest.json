@@ -1,0 +1,17 @@
+{
+  "domain": "jablotron_web",
+  "name": "Jablotron Web",
+  "codeowners": [
+    "@hranicka"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/hranicka/ha-jablotron",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/hranicka/ha-cc-jablotron-cloud/issues",
+  "loggers": [
+    "custom_components.jablotron_web"
+  ],
+  "requirements": [],
+  "version": "0.0.1"
+}

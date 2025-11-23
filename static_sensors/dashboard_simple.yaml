@@ -1,0 +1,21 @@
+# Dashboard karta - Jednoduchý přehled teplot
+# Použití: Zkopírujte tento kód v Edit Dashboard → Add Card → Manual
+
+type: entities
+title: 🌡️ Jablotron Teploty
+entities:
+  - entity: sensor.jablotron_teplomer_venku
+    name: Venkovní teplota
+    icon: mdi:thermometer
+  - entity: sensor.jablotron_teplomer_kotel
+    name: Teplota kotele
+    icon: mdi:radiator
+  - entity: sensor.jablotron_teplomer_bojler
+    name: Teplota bojleru
+    icon: mdi:water-boiler
+  - entity: binary_sensor.jablotron_vypnuty_ventilator
+    name: Vypnutý ventilátor
+    icon: mdi:fan-off
+show_header_toggle: false
+state_color: true
+

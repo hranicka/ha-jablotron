@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Jablotron Web Configuration",
+        "description": "Enter your Jablotron credentials",
+        "data": {
+          "username": "Email",
+          "password": "Password",
+          "service_id": "Service ID (optional)"
+        }
+      },
+      "sensors": {
+        "title": "Name Your Temperature Sensors",
+        "description": "Customize names for {sensor_count} discovered temperature sensors. You can also rename them later in Home Assistant."
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Jablotron Cloud",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This account is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jablotron Web Options",
+        "data": {
+          "scan_interval": "Update interval (seconds)"
+        }
+      }
+    }
+  }
+}
+

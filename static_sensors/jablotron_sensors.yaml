@@ -1,0 +1,41 @@
+# Jablotron Sensors Configuration for Home Assistant
+# Add this to your configuration.yaml or include it as a package
+
+rest:
+  - resource: "https://www.jablonet.net/app/ja100/ajax/stav.php"
+    method: POST
+    headers:
+      User-Agent: "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0"
+      Accept: "application/json, text/javascript, */*; q=0.01"
+      Accept-Language: "en-US,en;q=0.5"
+      Content-Type: "application/x-www-form-urlencoded"
+      X-Requested-With: "XMLHttpRequest"
+      Origin: "https://www.jablonet.net"
+      Referer: "https://www.jablonet.net/app/ja100?service="
+      Cookie: "lastMode-info@example.com=jablonet; PHPSESSID=xxx"
+    payload: "activeTab=heat"
+    scan_interval: 300  # Update every 5 minutes (adjust as needed)
+    sensor:
+      - name: "Jablotron Teploměr Venku"
+        unique_id: jablotron_teplomer_040
+        value_template: "{{ value_json.teplomery['040'].value }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Jablotron Teploměr Kotel"
+        unique_id: jablotron_teplomer_046
+        value_template: "{{ value_json.teplomery['046'].value }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "Jablotron Teploměr Bojler"
+        unique_id: jablotron_teplomer_047
+        value_template: "{{ value_json.teplomery['047'].value }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+    binary_sensor:
+      - name: "Jablotron Ventilátor Kotel"
+        unique_id: jablotron_pgm_6
+        value_template: "{{ value_json.pgm['6'].stav == 0 }}"
+        device_class: power
