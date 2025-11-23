@@ -13,6 +13,10 @@ from .const import API_LOGIN_URL, API_STATUS_URL, API_BASE_URL
 _LOGGER = logging.getLogger(__name__)
 
 
+class JablotronAuthError(Exception):
+    """Jablotron authentication error."""
+
+
 class JablotronClient:
     """Client for Jablotron API with automatic session management."""
 
@@ -98,7 +102,7 @@ class JablotronClient:
 
                 if response.status != 200:
                     _LOGGER.error(f"Login failed. HTTP Status: {response.status}, Body: {response_text}")
-                    return False
+                    raise JablotronAuthError(f"Login failed with status {response.status}")
 
                 # Check if the response is JSON with error status
                 if response_text:
@@ -178,22 +182,20 @@ class JablotronClient:
 
         if not self.session.cookie_jar:
             _LOGGER.info("No cookies found, performing initial login")
-            if not await self.login():
-                raise Exception("Initial login failed")
+            await self.login()
 
         try:
             data = await fetch_func()
 
             if data and data.get("status") == 300:
                 _LOGGER.info("Session expired (status 300), re-logging in with cleared cookies")
-                if not await self.login():
-                    raise Exception("Failed to re-login to Jablotron Cloud")
+                await self.login()
 
                 data = await fetch_func()
 
                 if data and data.get("status") == 300:
                     _LOGGER.error("Re-login failed, still getting status 300 from API")
-                    raise Exception("Failed to re-login to Jablotron Cloud (status 300)")
+                    raise JablotronAuthError("Failed to re-login to Jablotron Cloud (status 300)")
 
             self._next_retry_time = None
             return data

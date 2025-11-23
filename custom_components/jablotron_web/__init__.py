@@ -5,10 +5,11 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
-from .jablotron_client import JablotronClient
+from .jablotron_client import JablotronAuthError, JablotronClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Fetch data from API."""
         try:
             return await client.get_status()
+        except JablotronAuthError as err:
+            raise ConfigEntryAuthFailed from err
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
 
@@ -63,4 +66,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
-
