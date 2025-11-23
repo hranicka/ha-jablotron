@@ -33,8 +33,14 @@ sensor.py + binary_sensor.py (Entities)
 
 - **`async_unload_entry(hass, entry)`**
   - Called when integration is removed
-  - Unloads all platforms
-  - Cleans up stored data
+  - Unloads all platforms using `async_unload_platforms`
+  - Calls `client.async_close()` to close aiohttp session
+  - Cleans up stored data from `hass.data[DOMAIN]`
+
+- **`async_reload_entry(hass, entry)`**
+  - Called when options are changed
+  - Triggers reload of the integration
+  - Used by update listener for scan interval changes
 
 **Data Flow**:
 ```python
@@ -45,11 +51,15 @@ JablotronClient(username, password, service_id, hass)
 DataUpdateCoordinator(update_method=client.get_status, interval=300s)
     ↓
 coordinator.data → Shared across all entities
+    ↓
+hass.data[DOMAIN][entry_id] → {"coordinator": coordinator, "client": client}
 ```
 
 **Error Handling**:
 - `UpdateFailed` exception → Coordinator marks entities as unavailable
-- Re-login handled in `jablotron_client.py`
+- `ConfigEntryAuthFailed` exception → Triggers reauth flow
+- Re-login and retry logic handled in `jablotron_client.py`
+- Client session cleanup on unload via `async_close()`
 
 ---
 
@@ -90,6 +100,19 @@ Allows changing a scan interval after setup.
 - Updates `entry.options["scan_interval"]`
 - **Edit here**: Add more configurable options
 
+**Credential Update Flow**:
+1. User enters a new username / password / service_id (optional fields)
+2. If any credential changed → update `entry.data`
+3. Reload integration to create a new client with new credentials
+4. Return success
+
+**Reauth Flow** (`async_step_reauth`):
+- Triggered when `ConfigEntryAuthFailed` is raised
+- Shows credential form pre-filled with existing username/service_id
+- Tests new credentials
+- Updates entry data and reloads on success
+- Shows error if credentials are still invalid
+
 ---
 
 ### 3. `jablotron_client.py` - API Communication & Session Management
@@ -102,57 +125,91 @@ Allows changing a scan interval after setup.
 ```python
 __init__(username, password, service_id, hass)
     → Stores credentials
-    → Gets aiohttp session from Home Assistant
-    → Initializes phpsessid = None
+    → Stores hass reference
+    → Initializes session = None (created on demand)
+    → Initializes _next_retry_time = None (for retry backoff)
 ```
+
+**Session Management**:
+- `async _ensure_session()`: Creates ClientSession with CookieJar if needed
+- `async async_close()`: Closes aiohttp session (called on unload)
 
 **Methods**:
 
 #### `async login()`
-**Flow**:
-1. GET `https://www.jablonet.net` → Extract initial PHPSESSID from cookies
-2. POST `/ajax/login.php` with credentials → Get authenticated PHPSESSID
-3. Store updated PHPSESSID for future requests
+**Flow** (Multi-step authentication):
+1. Clear all cookies from session
+2. GET `https://www.jablonet.net` → Get initial PHPSESSID cookie
+3. POST `/ajax/login.php` with credentials → Authenticate
+4. GET `/cloud` → Get `lastMode` cookie
+5. GET `/app/ja100?service={service_id}` → Finalize session for JA100 app
 
-**Returns**: `True` on success, `False` on failure
+**Returns**: Nothing (raises exception on failure)
+
+**Raises**:
+- `JablotronAuthError` on any step failure
+- Includes detailed logging at each step
 
 **When login fails**:
-- Returns `False`
-- Logs error message
-- Config flow shows `invalid_auth` error to user
+- Raises `JablotronAuthError` with a descriptive message
+- Config flow catches error and shows `invalid_auth` to user
+- Coordinator catches error and triggers reauth flow
 
 **Edit here**: Change login endpoint, add 2FA support
 
 #### `async get_status()`
 **Flow**:
-1. Call `_fetch_status()`
-2. If response `status == 300` (expired):
-   - Call `login()` to re-authenticate
-   - Retry `_fetch_status()`
-3. Return sensor data
+1. Check retry backoff timer (30 min cooldown if API was down)
+2. Call `_api_request_handler(_fetch_status)`
+3. Handler manages session expiry and retries
 
-**Returns**: Dict with `teplomery`, `pgm`, etc.
+**Returns**: Dict with `teplomery`, `pgm`, `sekce`, `pir`, etc.
 
-**Edit here**: Add caching, change retry logic
+**Raises**:
+- `JablotronAuthError` - triggers reauth flow in Home Assistant
+- Generic `Exception` - marks entities unavailable, retries later
+
+**Edit here**: Change retry timeout, add caching
 
 #### `async _fetch_status()`
 Internal method that:
-1. Checks if PHPSESSID exists (if not, calls `login()`)
-2. POST `/app/ja100/ajax/stav.php` with PHPSESSID cookie
-3. Returns JSON response
+1. Ensures session exists
+2. POST `/app/ja100/ajax/stav.php` with cookies from session
+3. Payload: `activeTab=heat&service_id={service_id}`
+4. Returns parsed JSON response
 
 **Edit here**: Change API endpoint, modify payload
 
+#### `async _api_request_handler(fetch_func)`
+Generic handler for all API requests:
+1. Check if in retry backoff period (30 min cooldown)
+2. Ensure session exists
+3. If no cookies, call `login()` first
+4. Call `fetch_func()` to get data
+5. If `status == 300` (session expired):
+   - Clear cookies and call `login()` again
+   - Retry `fetch_func()`
+6. If still `status == 300` after retry → raise `JablotronAuthError`
+7. On success: Clear retry timer and return data
+8. On error: Set 30-minute retry backoff
+
 **Helper Methods**:
 
-- **`_get_headers(referer)`**: Builds request headers
-- **`_get_cookies()`**: Builds cookie dict with PHPSESSID
+- **`_get_headers(referer)`**: Builds request headers with User-Agent, referer, etc.
+- **`async _visit_homepage()`**: Gets initial cookies from homepage
+- **`async _ensure_session()`**: Creates aiohttp ClientSession if needed
+- **`async async_close()`**: Closes aiohttp session
 
 **Session Expiration Detection**:
 ```python
 if data.get("status") == 300:
     # Session expired, re-login needed
 ```
+
+**Retry Backoff**:
+- On API error (not auth): Sets `_next_retry_time = now + 1800` (30 minutes)
+- Prevents hammering API when service is down
+- Logged message shows time until next retry
 
 ---
 
@@ -183,32 +240,74 @@ if data.get("status") == 300:
 
 ---
 
-### 5. `binary_sensor.py` - Binary Sensor Platform (PGM)
+### 5. `binary_sensor.py` - Binary Sensor Platform (Sections, PGM, PIR)
 
-**Purpose**: Creates binary sensor entities for PGM outputs.
+**Purpose**: Creates binary sensor entities for alarm sections, PGM outputs, and PIR motion sensors.
 
 **Key Function**: `async_setup_entry(hass, entry, async_add_entities)`
 
 **Flow**:
 1. Get coordinator data
-2. Loop through `coordinator.data["pgm"]`
-3. Create `JablotronPGMBinarySensor` for each PGM
-4. Add entities
+2. Loop through `coordinator.data["sekce"]` → Create `JablotronSectionBinarySensor`
+3. Loop through `coordinator.data["pgm"]` → Create `JablotronPGMBinarySensor`
+4. Loop through `coordinator.data["pir"]` → Create `JablotronPIRBinarySensor`
+5. Add all entities
 
-**Class**: `JablotronPGMBinarySensor(CoordinatorEntity, BinarySensorEntity)`
+#### Class: `JablotronSectionBinarySensor`
+Represents an alarm section (armed/disarmed state).
+
+**Device Class**: `SAFETY`
 
 **Key Properties**:
-
-- **`is_on`**: Returns `True` if `stav == 0`, `False` if `stav == 1`
-- **`extra_state_attributes`**: Returns pgm_id, nazev, stav, reaction, timestamp, time
+- **`is_on`**: Returns `True` if `stav == 1` (armed), `False` if `stav == 0` (disarmed)
+- **`extra_state_attributes`**: Returns section_id, nazev, stav, state_name, active, time
+- **`unique_id`**: `{entry_id}_section_{section_id}`
 
 **State Logic**:
 ```python
-stav == 0 → ON (PGM active)
-stav == 1 → OFF (PGM inactive)
+stav == 1 → ON (Armed)
+stav == 0 → OFF (Disarmed)
 ```
 
-**Edit here**: Add alarm sensors, change device class, add controls
+#### Class: `JablotronPGMBinarySensor`
+Represents PGM output with smart device class detection.
+
+**Device Class**: Auto-detected based on name keywords:
+- Door keywords → `DOOR`
+- Gate/garage keywords → `GARAGE_DOOR`
+- Window keywords → `WINDOW`
+- Motion/PIR keywords → `MOTION`
+- Doorbell keywords → `SOUND`
+- Default → `POWER`
+
+**Key Properties**:
+- **`is_on`**: Returns `True` if `stav == 1`, `False` if `stav == 0`
+- **`extra_state_attributes`**: Returns pgm_id, nazev, stav, state_name, reaction, timestamp, time
+- **`unique_id`**: `{entry_id}_pgm_{pgm_id}`
+
+**State Logic**:
+```python
+stav == 1 → ON (PGM active)
+stav == 0 → OFF (PGM inactive)
+```
+
+#### Class: `JablotronPIRBinarySensor`
+Represents PIR motion sensor.
+
+**Device Class**: `MOTION`
+
+**Key Properties**:
+- **`is_on`**: Returns `True` if `active == 1`, `False` otherwise
+- **`extra_state_attributes`**: Returns pir_id, nazev, state_name, active, type, last_picture
+- **`unique_id`**: `{entry_id}_pir_{pir_id}`
+
+**State Logic**:
+```python
+active == 1 → ON (Motion detected)
+active == 0 → OFF (No motion)
+```
+
+**Edit here**: Add controls for arming/disarming, customize device classes
 
 ---
 
@@ -411,16 +510,26 @@ _LOGGER.debug(f"Coordinator data: {coordinator.data}")
 ### Test API Manually
 
 ```bash
-# Test login
-curl -v 'https://www.jablonet.net/ajax/login.php' \
+# Step 1: Get initial cookies
+curl -c cookies.txt 'https://www.jablonet.net'
+
+# Step 2: Login
+curl -b cookies.txt -c cookies.txt -v 'https://www.jablonet.net/ajax/login.php' \
   -X POST \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
   --data 'login=email&heslo=password&aStatus=200&loginType=Login'
 
-# Test status (use PHPSESSID from login)
-curl 'https://www.jablonet.net/app/ja100/ajax/stav.php' \
+# Step 3: Get lastMode cookie
+curl -b cookies.txt -c cookies.txt 'https://www.jablonet.net/cloud'
+
+# Step 4: Visit JA100 app
+curl -b cookies.txt -c cookies.txt 'https://www.jablonet.net/app/ja100?service=YOUR_SERVICE_ID'
+
+# Step 5: Test status fetch
+curl -b cookies.txt 'https://www.jablonet.net/app/ja100/ajax/stav.php' \
   -X POST \
-  -H 'Cookie: PHPSESSID=xxx' \
-  --data 'activeTab=heat'
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data 'activeTab=heat&service_id=YOUR_SERVICE_ID'
 ```
 
 ---
@@ -450,8 +559,10 @@ Data stored in `.storage/core.config_entries`:
 ### Entity Registry
 
 Entities registered with unique_id:
-- `{entry_id}_teplomer_{sensor_id}`
-- `{entry_id}_pgm_{pgm_id}`
+- `{entry_id}_teplomer_{sensor_id}` - Temperature sensors
+- `{entry_id}_pgm_{pgm_id}` - PGM outputs
+- `{entry_id}_section_{section_id}` - Alarm sections
+- `{entry_id}_pir_{pir_id}` - PIR motion sensors
 
 Allows renaming in UI without losing history.
 

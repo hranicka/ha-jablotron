@@ -1,17 +1,29 @@
 # Jablotron Integration for Home Assistant
-Two approaches for integrating Jablotron JA-100 sensors into Home Assistant:
+
+Two approaches for integrating a Jablotron JA-100 system into Home Assistant:
+
 ## 1. Custom Component (Recommended)
+
 **Location**: `custom_components/jablotron_web/`
-- Automatic session management
-- Auto re-login on expiration
+
+- Automatic session management with 4-step authentication
+- Auto re-login on session expiration
+- Reauth flow support
 - Customizable sensor names
-- Auto-discovered sensors
+- Auto-discovered sensors (temperature, alarm sections, PGM outputs, PIR motion)
+- 30-minute retry backoff on API errors
+- Supports multiple devices via `service_id`
+
 [See README](custom_components/jablotron_web/README.md)
+
 ## 2. REST Sensors (Static)
+
 **Location**: `static_sensors/`
+
 - Simple REST configuration
 - Manual PHPSESSID management
 - Static YAML configuration
+
 [See README](static_sensors/README.md)
 
 ---
