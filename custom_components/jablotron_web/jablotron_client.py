@@ -68,7 +68,7 @@ class JablotronClient:
             _LOGGER.error(f"Error visiting homepage: {e}", exc_info=True)
             return False
 
-    async def login(self) -> bool:
+    async def login(self) -> None:
         """Clear cookies and perform a full login flow."""
         _LOGGER.info("Performing full login to Jablotron Cloud.")
         await self._ensure_session()
@@ -113,7 +113,7 @@ class JablotronClient:
                             status = response_json.get("status")
                             if status and status != 200:
                                 _LOGGER.error(f"Login failed. API returned status: {status}, Response: {response_json}")
-                                return False
+                                raise JablotronAuthError(f"Login failed with API status {status}")
                             _LOGGER.debug(f"Login response JSON: {response_json}")
                     except:
                         # Response is not JSON, that's okay - might be empty or plain text
@@ -156,15 +156,12 @@ class JablotronClient:
                 _LOGGER.debug(f"JA100 app page status: {ja100_response.status}")
                 if ja100_response.status == 200:
                     _LOGGER.info("Successfully logged in and obtained all cookies.")
-                    return True
                 else:
-                    _LOGGER.warning(f"JA100 app page returned status {ja100_response.status}")
-                    # Don't fail login if JA100 page fails, just log a warning
-                    return True
+                    _LOGGER.error(f"JA100 app page returned status {ja100_response.status}")
+                    raise JablotronAuthError(f"JA100 app page returned status {ja100_response.status}")
         except Exception as e:
             _LOGGER.error(f"Error fetching JA100 app page: {e}", exc_info=True)
-            # Don't fail login if JA100 page fails, just log error
-            return True
+            raise JablotronAuthError("Error fetching JA100 app page") from e
 
     async def get_status(self) -> Dict[str, Any]:
         """Get status from Jablotron API with automatic re-login on session expiry."""
