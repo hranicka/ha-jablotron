@@ -67,9 +67,13 @@ class JablotronClient:
     async def refresh_session(self) -> bool:
         """Always fetch a new PHPSESSID by visiting the base domain."""
         await self._ensure_session()
+
+        # Clear the cookie jar to force the server to send a new PHPSESSID
+        self.session.cookie_jar.clear()
         self.phpsessid = None
+
         try:
-            _LOGGER.debug(f"Fetching new PHPSESSID from {API_BASE_URL}")
+            _LOGGER.debug(f"Fetching new PHPSESSID from {API_BASE_URL} (cookie jar cleared)")
             async with self.session.get(
                 API_BASE_URL,
                 headers={"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0"}
@@ -205,7 +209,11 @@ class JablotronClient:
         cookies = self._get_cookies()
 
         # Use 'heat' to get temperature sensors (teplomery) and binary sensors (pgm)
-        payload = "activeTab=heat"
+        # Include service_id in the payload if specified
+        if self.service_id:
+            payload = f"activeTab=heat&service_id={self.service_id}"
+        else:
+            payload = "activeTab=heat"
 
         _LOGGER.debug(f"Status request URL: {API_STATUS_URL}")
         _LOGGER.debug(f"Status request headers: {headers}")
