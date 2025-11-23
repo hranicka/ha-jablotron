@@ -1,0 +1,6 @@
+{
+  "name": "Jablotron Web",
+  "render_readme": true,
+  "filename": "jablotron_web.zip",
+  "homeassistant": "2024.1.0"
+}

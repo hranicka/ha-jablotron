@@ -20,6 +20,29 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
 
 ## Installation
 
+### Via HACS (Recommended)
+
+1. Add a custom repository:
+   - HACS → Integrations → ⋮ (top right) → Custom repositories
+   - Repository: `https://github.com/hranicka/ha-jablotron`
+   - Category: Integration
+   - Click "Add"
+
+2. Install integration:
+   - HACS → Integrations → Search "Jablotron Web"
+   - Click "Download"
+   - Restart Home Assistant
+
+3. Configure:
+   - Settings → Devices & Services → Add Integration
+   - Search "Jablotron Web"
+   - Enter credentials (email, password)
+   - **Optionally specify `service_id`** to select which device to monitor
+   - Name your temperature sensors
+   - Done
+
+### Manual Installation
+
 1. Copy to Home Assistant:
    ```bash
    cp -r custom_components/jablotron_web /config/custom_components/
@@ -27,13 +50,7 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
 
 2. Restart Home Assistant
 
-3. Add Integration:
-   - Settings → Devices & Services → Add Integration
-   - Search "Jablotron Web"
-   - Enter credentials (email, password)
-   - **Optionally specify `service_id`** to select which device to monitor
-   - Name your temperature sensors
-   - Done
+3. Configure (same as step 3 above)
 
 ## How It Works
 
@@ -178,6 +195,13 @@ Restart Home Assistant after making changes.
 - Check coordinator data in debug logs
 - Verify sensors exist in your Jablotron system
 - Ensure the correct service_id is configured
+
+**Frontend errors: "entity-picker.no_match" or "device-picker.no_match" (Czech language)**
+- These are **NOT** from this integration
+- They are Home Assistant core frontend bugs in Czech translations
+- Safe to ignore - they don't affect functionality
+- Appears in logs as: `[frontend.js.modern...] Failed to format translation...`
+- Can be resolved by switching HA language to English temporarily
 
 ## API Endpoints
 
