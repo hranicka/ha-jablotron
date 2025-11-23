@@ -123,7 +123,7 @@ class JablotronClient:
 
         except Exception as e:
             _LOGGER.error(f"Login request error: {e}", exc_info=True)
-            return False
+            raise JablotronAuthError("Login request failed") from e
 
         # 4. Visit /cloud page to get the lastMode cookie
         _LOGGER.debug("Fetching /cloud page to set lastMode cookie.")
@@ -139,10 +139,10 @@ class JablotronClient:
                 _LOGGER.debug(f"/cloud response status: {cloud_response.status}")
                 if cloud_response.status != 200:
                     _LOGGER.error(f"/cloud page fetch failed with status: {cloud_response.status}")
-                    return False
+                    raise JablotronAuthError(f"/cloud page fetch failed with status: {cloud_response.status}")
         except Exception as e:
             _LOGGER.error(f"Error fetching /cloud page: {e}", exc_info=True)
-            return False
+            raise JablotronAuthError("Error fetching /cloud page") from e
 
         # 5. Visit the JA100 app page (required before fetching sensors)
         _LOGGER.debug("Visiting JA100 app page...")
@@ -189,7 +189,10 @@ class JablotronClient:
 
             if data and data.get("status") == 300:
                 _LOGGER.info("Session expired (status 300), re-logging in with cleared cookies")
-                await self.login()
+                try:
+                    await self.login()
+                except JablotronAuthError as e:
+                    raise JablotronAuthError("Failed to re-login to Jablotron Cloud") from e
 
                 data = await fetch_func()
 
