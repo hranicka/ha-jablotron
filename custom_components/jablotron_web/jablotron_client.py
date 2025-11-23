@@ -3,9 +3,9 @@ import logging
 from typing import Dict, Any, Optional
 from urllib.parse import urlencode
 import time
+import aiohttp
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import API_LOGIN_URL, API_STATUS_URL, API_BASE_URL
 
@@ -21,10 +21,23 @@ class JablotronClient:
         self.password = password
         self.service_id = service_id
         self.hass = hass
-        self.session = async_get_clientsession(hass)
+        # Create custom session with cookie jar to handle cookies properly
+        self.session: Optional[aiohttp.ClientSession] = None
         self.phpsessid: Optional[str] = None
         self._cookies: Dict[str, str] = {}
         self._next_retry_time: Optional[float] = None  # Timestamp for next allowed API attempt
+
+    async def _ensure_session(self):
+        """Ensure aiohttp session is created with a cookie jar."""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar()
+            )
+
+    async def async_close(self):
+        """Close the aiohttp session."""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
     def _get_headers(self, referer: str = None) -> Dict[str, str]:
         """Get common headers for requests."""
@@ -53,24 +66,48 @@ class JablotronClient:
 
     async def refresh_session(self) -> bool:
         """Always fetch a new PHPSESSID by visiting the base domain."""
+        await self._ensure_session()
         self.phpsessid = None
         try:
+            _LOGGER.debug(f"Fetching new PHPSESSID from {API_BASE_URL}")
             async with self.session.get(
                 API_BASE_URL,
                 headers={"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0"}
             ) as response:
-                # Extract PHPSESSID from cookies
-                if 'Set-Cookie' in response.headers:
-                    for cookie in response.headers.getall('Set-Cookie', []):
+                _LOGGER.debug(f"Base URL response status: {response.status}")
+                _LOGGER.debug(f"Response headers: {dict(response.headers)}")
+                _LOGGER.debug(f"Response cookies: {dict(response.cookies)}")
+
+                # Read response body for debugging
+                response_body = await response.text()
+                _LOGGER.debug(f"Response body length: {len(response_body)} bytes")
+                if len(response_body) < 1000:
+                    _LOGGER.debug(f"Response body: {response_body}")
+
+                # Try to extract PHPSESSID from response.cookies first
+                if response.cookies and 'PHPSESSID' in response.cookies:
+                    self.phpsessid = response.cookies['PHPSESSID'].value
+                    _LOGGER.debug(f"Got new PHPSESSID from response.cookies: {self.phpsessid}")
+
+                # If not found, try Set-Cookie headers
+                if not self.phpsessid and 'Set-Cookie' in response.headers:
+                    set_cookies = response.headers.getall('Set-Cookie', [])
+                    _LOGGER.debug(f"Set-Cookie headers: {set_cookies}")
+                    for cookie in set_cookies:
                         if 'PHPSESSID' in cookie:
+                            # Parse: PHPSESSID=xyz; path=/; ...
                             self.phpsessid = cookie.split('PHPSESSID=')[1].split(';')[0]
-                            _LOGGER.debug(f"Got new PHPSESSID: {self.phpsessid}")
-                if not self.phpsessid and response.cookies:
-                    if 'PHPSESSID' in response.cookies:
-                        self.phpsessid = response.cookies['PHPSESSID'].value
+                            _LOGGER.debug(f"Got new PHPSESSID from Set-Cookie header: {self.phpsessid}")
+                            break
+
+                if self.phpsessid:
+                    _LOGGER.info(f"Successfully refreshed PHPSESSID")
+                else:
+                    _LOGGER.error("Could not extract PHPSESSID from response")
+
             return self.phpsessid is not None
         except Exception as e:
-            _LOGGER.warning(f"Could not refresh PHPSESSID: {e}")
+            _LOGGER.error(f"Could not refresh PHPSESSID: {e}", exc_info=True)
             return False
 
     async def login(self) -> bool:
@@ -91,6 +128,11 @@ class JablotronClient:
         # Only send PHPSESSID cookie for login
         cookies = {"PHPSESSID": self.phpsessid} if self.phpsessid else {}
 
+        _LOGGER.debug(f"Login request URL: {API_LOGIN_URL}")
+        _LOGGER.debug(f"Login request headers: {headers}")
+        _LOGGER.debug(f"Login request cookies: {cookies}")
+        _LOGGER.debug(f"Login request data: login={self.username}, heslo=*****, aStatus=200, loginType=Login")
+
         try:
             async with self.session.post(
                 API_LOGIN_URL,
@@ -99,16 +141,25 @@ class JablotronClient:
                 cookies=cookies,
             ) as response:
                 _LOGGER.debug(f"Login response status: {response.status}")
+                _LOGGER.debug(f"Login response headers: {dict(response.headers)}")
+                _LOGGER.debug(f"Login response cookies: {dict(response.cookies)}")
+
+                response_text = await response.text()
+                _LOGGER.debug(f"Login response body length: {len(response_text)} bytes")
+                if response_text:
+                    _LOGGER.debug(f"Login response body: {response_text}")
+                else:
+                    _LOGGER.debug("Login response body is empty (expected)")
+
                 # Login response has an empty body, just check status
                 if response.status == 200:
                     _LOGGER.info("Successfully logged in to Jablotron Cloud")
                     return True
                 else:
-                    response_text = await response.text()
                     _LOGGER.error(f"Login failed with status {response.status}: {response_text}")
                     return False
         except Exception as e:
-            _LOGGER.error(f"Login error: {e}")
+            _LOGGER.error(f"Login error: {e}", exc_info=True)
             return False
 
     async def get_status(self) -> Dict[str, Any]:
@@ -156,6 +207,11 @@ class JablotronClient:
         # Use 'heat' to get temperature sensors (teplomery) and binary sensors (pgm)
         payload = "activeTab=heat"
 
+        _LOGGER.debug(f"Status request URL: {API_STATUS_URL}")
+        _LOGGER.debug(f"Status request headers: {headers}")
+        _LOGGER.debug(f"Status request cookies: {cookies}")
+        _LOGGER.debug(f"Status request payload: {payload}")
+
         try:
             async with self.session.post(
                 API_STATUS_URL,
@@ -163,15 +219,23 @@ class JablotronClient:
                 headers=headers,
                 cookies=cookies,
             ) as response:
+                _LOGGER.debug(f"Status response status: {response.status}")
+                _LOGGER.debug(f"Status response headers: {dict(response.headers)}")
+                _LOGGER.debug(f"Status response cookies: {dict(response.cookies)}")
+
                 response_text = await response.text()
-                _LOGGER.debug(f"Status response: {response_text}")
+                _LOGGER.debug(f"Status response body length: {len(response_text)} bytes")
+                _LOGGER.debug(f"Status response body: {response_text}")
+
                 try:
                     data = await response.json()
-                except Exception:
-                    _LOGGER.error("Failed to parse JSON from status response")
+                    _LOGGER.debug(f"Status data parsed successfully: {data}")
+                except Exception as parse_error:
+                    _LOGGER.error(f"Failed to parse JSON from status response: {parse_error}")
+                    _LOGGER.error(f"Response text was: {response_text}")
                     raise Exception("Failed to parse JSON from status response")
-                _LOGGER.debug(f"Status data received: {data}")
+
                 return data
         except Exception as e:
-            _LOGGER.error(f"Error fetching status: {e}")
+            _LOGGER.error(f"Error fetching status: {e}", exc_info=True)
             raise Exception("Jablotron API request failed")
