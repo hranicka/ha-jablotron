@@ -61,6 +61,16 @@ class JablotronConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if self._discovered_sensors:
                         return await self.async_step_sensors()
 
+                    if self.context.get("source") == config_entries.SOURCE_REAUTH:
+                        existing_entry = self.hass.config_entries.async_get_entry(
+                            self.context["entry_id"]
+                        )
+                        self.hass.config_entries.async_update_entry(
+                            existing_entry, data=user_input
+                        )
+                        await self.hass.config_entries.async_reload(existing_entry.entry_id)
+                        return self.async_abort(reason="reauth_successful")
+
                     # Otherwise, create entry without custom names
                     await self.async_set_unique_id(user_input[CONF_USERNAME])
                     self._abort_if_unique_id_configured()
