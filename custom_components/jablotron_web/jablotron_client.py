@@ -115,12 +115,14 @@ class JablotronClient:
                                 _LOGGER.error(f"Login failed. API returned status: {status}, Response: {response_json}")
                                 raise JablotronAuthError(f"Login failed with API status {status}")
                             _LOGGER.debug(f"Login response JSON: {response_json}")
-                    except:
+                    except json.JSONDecodeError:
                         # Response is not JSON, that's okay - might be empty or plain text
                         pass
 
                 _LOGGER.debug("Login POST successful.")
 
+        except JablotronAuthError:
+            raise  # Re-raise JablotronAuthError to be caught by the caller
         except Exception as e:
             _LOGGER.error(f"Login request error: {e}", exc_info=True)
             raise JablotronAuthError("Login request failed") from e
@@ -200,6 +202,9 @@ class JablotronClient:
             self._next_retry_time = None
             return data
 
+        except JablotronAuthError:
+            # Re-raise auth errors so Home Assistant can trigger reauth flow
+            raise
         except Exception as e:
             _LOGGER.error(f"Jablotron API error: {e}. Will retry after 30 minutes.")
             self._next_retry_time = time.time() + 1800  # 30 minutes

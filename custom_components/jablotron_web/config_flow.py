@@ -192,12 +192,56 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Check if any credentials were provided
+            password_to_use = user_input.get(CONF_PASSWORD, "").strip()
+
+            # Build new data dict with updated credentials
+            new_data = self.config_entry.data.copy()
+            credentials_changed = False
+
+            if user_input.get(CONF_USERNAME) and user_input[CONF_USERNAME] != self.config_entry.data.get(CONF_USERNAME):
+                new_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                credentials_changed = True
+
+            if password_to_use:
+                new_data[CONF_PASSWORD] = password_to_use
+                credentials_changed = True
+
+            if CONF_SERVICE_ID in user_input and user_input[CONF_SERVICE_ID] != self.config_entry.data.get(CONF_SERVICE_ID):
+                new_data[CONF_SERVICE_ID] = user_input[CONF_SERVICE_ID]
+                credentials_changed = True
+
+            # Update config entry data if credentials changed
+            if credentials_changed:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=new_data
+                )
+                # Reload to apply new credentials (creates new client instance)
+                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+
+            # Save options (scan_interval)
+            # If only scan_interval changed, the update listener will handle the reload
+            return self.async_create_entry(
+                title="",
+                data={"scan_interval": user_input.get("scan_interval", DEFAULT_SCAN_INTERVAL)}
+            )
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        CONF_USERNAME,
+                        default=self.config_entry.data.get(CONF_USERNAME, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_PASSWORD,
+                        default="",
+                    ): str,
+                    vol.Optional(
+                        CONF_SERVICE_ID,
+                        default=self.config_entry.data.get(CONF_SERVICE_ID, ""),
+                    ): str,
                     vol.Optional(
                         "scan_interval",
                         default=self.config_entry.options.get(
