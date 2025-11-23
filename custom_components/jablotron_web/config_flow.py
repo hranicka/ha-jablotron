@@ -33,16 +33,16 @@ class JablotronConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            # Validate credentials
             client = JablotronClient(
                 user_input[CONF_USERNAME],
                 user_input[CONF_PASSWORD],
                 user_input.get(CONF_SERVICE_ID, ""),
                 self.hass,
             )
-
             try:
-                if await client.login():
+                if not await client.login():
+                    errors["base"] = "invalid_auth"
+                else:
                     # Get initial data to discover sensors
                     try:
                         data = await client.get_status()
@@ -69,11 +69,25 @@ class JablotronConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         title=f"Jablotron ({user_input[CONF_USERNAME]})",
                         data=user_input,
                     )
-                else:
-                    errors["base"] = "invalid_auth"
-            except Exception as e:
+            except Exception:
                 _LOGGER.exception("Unexpected exception during login")
                 errors["base"] = "cannot_connect"
+            finally:
+                # Ensure the client session is always closed
+                await client.async_close()
+
+        if errors:
+            # If there were errors, show the form again
+            data_schema = vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME, default=user_input.get(CONF_USERNAME, "")): str,
+                    vol.Required(CONF_PASSWORD): str,
+                    vol.Optional(CONF_SERVICE_ID, default=user_input.get(CONF_SERVICE_ID, "")): str,
+                }
+            )
+            return self.async_show_form(
+                step_id="user", data_schema=data_schema, errors=errors
+            )
 
         data_schema = vol.Schema(
             {

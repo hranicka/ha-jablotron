@@ -1,4 +1,5 @@
 """Jablotron API Client with session management."""
+import json
 import logging
 from typing import Dict, Any, Optional
 from urllib.parse import urlencode
@@ -36,21 +37,17 @@ class JablotronClient:
         if self.session and not self.session.closed:
             await self.session.close()
 
-    def _get_headers(self, referer: str = None) -> Dict[str, str]:
+    def _get_headers(self, referer: str) -> Dict[str, str]:
         """Get common headers for requests."""
-        headers = {
+        return {
             "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0",
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Language": "en-US,en;q=0.5",
             "Content-Type": "application/x-www-form-urlencoded",
             "X-Requested-With": "XMLHttpRequest",
             "Origin": API_BASE_URL,
+            "Referer": referer,
         }
-
-        if referer:
-            headers["Referer"] = referer
-
-        return headers
 
     async def _visit_homepage(self) -> bool:
         """Visit the homepage to get initial cookies (like PHPSESSID)."""
@@ -97,11 +94,28 @@ class JablotronClient:
             ) as response:
                 response_text = await response.text()
                 _LOGGER.debug(f"Login response status: {response.status}")
+                _LOGGER.debug(f"Login response body: {response_text}")
 
-                if response.status != 200 or response_text:
-                    _LOGGER.error(f"Login failed. Status: {response.status}, Body: {response_text}")
+                if response.status != 200:
+                    _LOGGER.error(f"Login failed. HTTP Status: {response.status}, Body: {response_text}")
                     return False
-                _LOGGER.debug("Login POST successful (empty body expected).")
+
+                # Check if the response is JSON with error status
+                if response_text:
+                    try:
+                        response_json = json.loads(response_text)
+                        # Check for error status in JSON response (e.g., status != 200)
+                        if isinstance(response_json, dict):
+                            status = response_json.get("status")
+                            if status and status != 200:
+                                _LOGGER.error(f"Login failed. API returned status: {status}, Response: {response_json}")
+                                return False
+                            _LOGGER.debug(f"Login response JSON: {response_json}")
+                    except:
+                        # Response is not JSON, that's okay - might be empty or plain text
+                        pass
+
+                _LOGGER.debug("Login POST successful.")
 
         except Exception as e:
             _LOGGER.error(f"Login request error: {e}", exc_info=True)
@@ -119,66 +133,75 @@ class JablotronClient:
             async with self.session.get(cloud_url, headers=cloud_headers) as cloud_response:
                 await cloud_response.text()
                 _LOGGER.debug(f"/cloud response status: {cloud_response.status}")
-                if cloud_response.status == 200:
-                    _LOGGER.info("Successfully logged in and obtained all cookies.")
-                    return True
-                else:
+                if cloud_response.status != 200:
                     _LOGGER.error(f"/cloud page fetch failed with status: {cloud_response.status}")
                     return False
         except Exception as e:
             _LOGGER.error(f"Error fetching /cloud page: {e}", exc_info=True)
             return False
 
+        # 5. Visit the JA100 app page (required before fetching sensors)
+        _LOGGER.debug("Visiting JA100 app page...")
+        ja100_url = f"{API_BASE_URL}/app/ja100"
+        if self.service_id:
+            ja100_url += f"?service={self.service_id}"
+
+        try:
+            async with self.session.get(ja100_url, headers=cloud_headers) as ja100_response:
+                await ja100_response.text()
+                _LOGGER.debug(f"JA100 app page status: {ja100_response.status}")
+                if ja100_response.status == 200:
+                    _LOGGER.info("Successfully logged in and obtained all cookies.")
+                    return True
+                else:
+                    _LOGGER.warning(f"JA100 app page returned status {ja100_response.status}")
+                    # Don't fail login if JA100 page fails, just log a warning
+                    return True
+        except Exception as e:
+            _LOGGER.error(f"Error fetching JA100 app page: {e}", exc_info=True)
+            # Don't fail login if JA100 page fails, just log error
+            return True
+
     async def get_status(self) -> Dict[str, Any]:
         """Get status from Jablotron API with automatic re-login on session expiry."""
-        # Check if we should wait before retrying
+        return await self._api_request_handler(self._fetch_status)
+
+    async def _api_request_handler(self, fetch_func) -> Dict[str, Any]:
+        """Handle API requests, including session expiry and retries."""
         now = time.time()
         if self._next_retry_time and now < self._next_retry_time:
             retry_in = int(self._next_retry_time - now)
             _LOGGER.warning(f"Jablotron API unavailable, next retry in {retry_in} seconds")
             raise Exception(f"Jablotron API unavailable, retry after {retry_in} seconds")
 
-        # Ensure we have a session
         await self._ensure_session()
 
-        # Check if we have cookies - if not, do initial login
         if not self.session.cookie_jar:
             _LOGGER.info("No cookies found, performing initial login")
             if not await self.login():
                 raise Exception("Initial login failed")
 
-        # Try to fetch status
         try:
-            data = await self._fetch_status()
+            data = await fetch_func()
+
+            if data and data.get("status") == 300:
+                _LOGGER.info("Session expired (status 300), re-logging in with cleared cookies")
+                if not await self.login():
+                    raise Exception("Failed to re-login to Jablotron Cloud")
+
+                data = await fetch_func()
+
+                if data and data.get("status") == 300:
+                    _LOGGER.error("Re-login failed, still getting status 300 from API")
+                    raise Exception("Failed to re-login to Jablotron Cloud (status 300)")
+
+            self._next_retry_time = None
+            return data
+
         except Exception as e:
             _LOGGER.error(f"Jablotron API error: {e}. Will retry after 30 minutes.")
-            self._next_retry_time = now + 1800  # 30 minutes
-            raise Exception("Jablotron API unavailable, will retry after 30 minutes")
-
-        # Check if the session expired (status 300 in response body)
-        if data and data.get("status") == 300:
-            _LOGGER.info("Session expired (status 300), re-logging in with cleared cookies")
-
-            # Re-login (which clears cookies internally)
-            if not await self.login():
-                raise Exception("Failed to re-login to Jablotron Cloud")
-
-            # Retry fetching status after re-login
-            try:
-                data = await self._fetch_status()
-            except Exception as e:
-                _LOGGER.error(f"Jablotron API error after re-login: {e}. Will retry after 30 minutes.")
-                self._next_retry_time = time.time() + 1800
-                raise Exception("Jablotron API unavailable, will retry after 30 minutes")
-
-            # Check if still getting status 300
-            if data and data.get("status") == 300:
-                _LOGGER.error("Re-login failed, still getting status 300 from API")
-                raise Exception("Failed to re-login to Jablotron Cloud (status 300)")
-
-        # Success - clear retry timer
-        self._next_retry_time = None
-        return data
+            self._next_retry_time = time.time() + 1800  # 30 minutes
+            raise Exception("Jablotron API unavailable, will retry after 30 minutes") from e
 
     async def _fetch_status(self) -> Dict[str, Any]:
         """Fetch status from API (stav.php)."""
@@ -195,28 +218,23 @@ class JablotronClient:
 
         _LOGGER.debug(f"Fetching status from {API_STATUS_URL}")
 
-        try:
-            async with self.session.post(
-                API_STATUS_URL,
-                data=payload,
-                headers=headers,
-            ) as response:
-                _LOGGER.debug(f"Status response status: {response.status}")
+        async with self.session.post(
+            API_STATUS_URL,
+            data=payload,
+            headers=headers,
+        ) as response:
+            _LOGGER.debug(f"Status response status: {response.status}")
 
-                if response.status != 200:
-                    raise Exception(f"Status request returned status {response.status}")
+            if response.status != 200:
+                raise Exception(f"Status request returned status {response.status}")
 
-                response_text = await response.text()
-                _LOGGER.debug(f"Status response body: {response_text}")
+            response_text = await response.text()
+            _LOGGER.debug(f"Status response body: {response_text}")
 
-                try:
-                    data = await response.json()
-                    _LOGGER.debug(f"Status data parsed: {data}")
-                    return data
-                except Exception as parse_error:
-                    _LOGGER.error(f"Failed to parse JSON from status response: {parse_error}")
-                    raise Exception("Failed to parse JSON from status response")
-
-        except Exception as e:
-            _LOGGER.error(f"Error fetching status: {e}", exc_info=True)
-            raise
+            try:
+                data = json.loads(response_text)
+                _LOGGER.debug(f"Status data parsed: {data}")
+                return data
+            except Exception as parse_error:
+                _LOGGER.error(f"Failed to parse JSON from status response: {parse_error}")
+                raise Exception("Failed to parse JSON from status response") from parse_error
