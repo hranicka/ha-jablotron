@@ -89,6 +89,13 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_unique_id = f"{entry_id}_pgm_switch_{pgm_id}"
         self._optimistic_state: bool | None = None
 
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        # Don't update if we have an optimistic state pending
+        # This prevents coordinator updates from overwriting our optimistic UI
+        if self._optimistic_state is None:
+            super()._handle_coordinator_update()
+
     @property
     def is_on(self) -> bool | None:
         """Return true if the switch is on."""
@@ -122,9 +129,12 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
             result = await self._client.control_pgm(self._pgm_id, 1)
             _LOGGER.info(f"PGM {self._pgm_id} turned on: {result}")
             
-            # Clear optimistic state and update from coordinator
-            self._optimistic_state = None
+            # Wait for the coordinator to get fresh data
             await self.coordinator.async_request_refresh()
+
+            # Clear optimistic state and update with real data
+            self._optimistic_state = None
+            self.async_write_ha_state()
         except Exception as err:
             _LOGGER.error(f"Failed to turn on PGM {self._pgm_id}: {err}")
             # Revert to previous state on failure
@@ -148,9 +158,12 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
             result = await self._client.control_pgm(self._pgm_id, 0)
             _LOGGER.info(f"PGM {self._pgm_id} turned off: {result}")
             
-            # Clear optimistic state and update from coordinator
-            self._optimistic_state = None
+            # Wait for the coordinator to get fresh data
             await self.coordinator.async_request_refresh()
+
+            # Clear optimistic state and update with real data
+            self._optimistic_state = None
+            self.async_write_ha_state()
         except Exception as err:
             _LOGGER.error(f"Failed to turn off PGM {self._pgm_id}: {err}")
             # Revert to previous state on failure
