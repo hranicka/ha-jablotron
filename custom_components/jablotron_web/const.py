@@ -17,4 +17,4 @@ API_STATUS_URL = f"{API_BASE_URL}/app/ja100/ajax/stav.php"
 API_CONTROL_URL = f"{API_BASE_URL}/app/ja100/ajax/ovladani2.php"
 
 # PGM reactions that support switching
-PGM_SWITCHABLE_REACTIONS = ["pgorSwitchOnOff"]
+PGM_SWITCHABLE_REACTIONS = ["pgorSwitchOnOff", "pgorPulse"]
