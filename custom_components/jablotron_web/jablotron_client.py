@@ -8,7 +8,7 @@ import aiohttp
 
 from homeassistant.core import HomeAssistant
 
-from .const import API_LOGIN_URL, API_STATUS_URL, API_BASE_URL
+from .const import API_LOGIN_URL, API_STATUS_URL, API_BASE_URL, API_CONTROL_URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,12 +20,13 @@ class JablotronAuthError(Exception):
 class JablotronClient:
     """Client for Jablotron API with automatic session management."""
 
-    def __init__(self, username: str, password: str, service_id: str, hass: HomeAssistant):
+    def __init__(self, username: str, password: str, service_id: str, hass: HomeAssistant, pgm_code: str = ""):
         """Initialize the client."""
         self.username = username
         self.password = password
         self.service_id = service_id
         self.hass = hass
+        self.pgm_code = pgm_code
         self.session: Optional[aiohttp.ClientSession] = None
         self._next_retry_time: Optional[float] = None  # Timestamp for next allowed API attempt
 
@@ -245,3 +246,73 @@ class JablotronClient:
             except Exception as parse_error:
                 _LOGGER.error(f"Failed to parse JSON from status response: {parse_error}")
                 raise Exception("Failed to parse JSON from status response") from parse_error
+
+    async def control_pgm(self, pgm_id: str, status: int) -> Dict[str, Any]:
+        """Control a PGM output (turn on/off).
+
+        Args:
+            pgm_id: The PGM ID (e.g., "6" for PGM_7)
+            status: 1 for on, 0 for off
+
+        Returns:
+            API response dict with keys: ts, id, authorization, result, responseCode
+        """
+        return await self._api_request_handler(lambda: self._control_pgm(pgm_id, status))
+
+    async def _control_pgm(self, pgm_id: str, status: int) -> Dict[str, Any]:
+        """Internal method to send PGM control request."""
+        await self._ensure_session()
+
+        referer = f"{API_BASE_URL}/app/ja100?service={self.service_id}"
+        headers = self._get_headers(referer=referer)
+
+        # Build the state_name (e.g., PGM_7 for pgm_id "6")
+        pgm_index = int(pgm_id) + 1
+        state_name = f"PGM_{pgm_index}"
+        uid = f"{state_name}_prehled"
+
+        # Build payload
+        payload = {
+            "section": state_name,
+            "status": str(status),
+            "code": self.pgm_code,
+            "uid": uid,
+        }
+
+        _LOGGER.debug(f"Controlling PGM {state_name}: status={status}, payload={payload}")
+
+        async with self.session.post(
+            API_CONTROL_URL,
+            data=urlencode(payload),
+            headers=headers,
+        ) as response:
+            _LOGGER.debug(f"Control response status: {response.status}")
+
+            if response.status != 200:
+                raise Exception(f"Control request returned status {response.status}")
+
+            response_text = await response.text()
+            _LOGGER.debug(f"Control response body: {response_text}")
+
+            try:
+                data = json.loads(response_text)
+                _LOGGER.debug(f"Control response parsed: {data}")
+
+                # Check for PGM-specific error responses (authorization, responseCode)
+                # Note: session expiry (status 300) is handled by _api_request_handler
+                authorization = data.get("authorization")
+                response_code = data.get("responseCode")
+
+                if authorization is not None and authorization != 200:
+                    _LOGGER.error(f"PGM control authorization failed: {authorization}")
+                    raise Exception(f"PGM control authorization failed: {authorization}")
+
+                if response_code is not None and response_code != 200:
+                    _LOGGER.error(f"PGM control failed with response code: {response_code}")
+                    raise Exception(f"PGM control failed with response code: {response_code}")
+
+                return data
+            except json.JSONDecodeError as parse_error:
+                _LOGGER.error(f"Failed to parse JSON from control response: {parse_error}")
+                raise Exception("Failed to parse JSON from control response") from parse_error
+

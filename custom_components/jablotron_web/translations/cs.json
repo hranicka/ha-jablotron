@@ -7,7 +7,8 @@
         "data": {
           "username": "Email",
           "password": "Heslo",
-          "service_id": "ID služby (volitelné)"
+          "service_id": "ID služby (volitelné)",
+          "pgm_code": "Kód pro ovládání PGM (volitelné, nutné pro přepínání PGM výstupů)"
         }
       },
       "sensors": {
@@ -32,6 +33,7 @@
           "username": "Email",
           "password": "Heslo (nechte prázdné pro zachování současného)",
           "service_id": "ID služby",
+          "pgm_code": "Kód pro ovládání PGM",
           "scan_interval": "Interval aktualizace (sekundy)"
         }
       }

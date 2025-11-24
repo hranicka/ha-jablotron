@@ -13,7 +13,7 @@ from .jablotron_client import JablotronAuthError, JablotronClient
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -22,8 +22,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     username = entry.data["username"]
     password = entry.data["password"]
     service_id = entry.data.get("service_id", "")
+    pgm_code = entry.data.get("pgm_code", "")
 
-    client = JablotronClient(username, password, service_id, hass)
+    client = JablotronClient(username, password, service_id, hass, pgm_code)
 
     async def async_update_data():
         """Fetch data from API."""

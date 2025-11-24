@@ -7,7 +7,8 @@
         "data": {
           "username": "Email",
           "password": "Password",
-          "service_id": "Service ID (optional)"
+          "service_id": "Service ID (optional)",
+          "pgm_code": "PGM Control Code (optional, required for switching PGM outputs)"
         }
       },
       "sensors": {
@@ -32,6 +33,7 @@
           "username": "Email",
           "password": "Password (leave blank to keep current)",
           "service_id": "Service ID",
+          "pgm_code": "PGM Control Code",
           "scan_interval": "Update interval (seconds)"
         }
       }

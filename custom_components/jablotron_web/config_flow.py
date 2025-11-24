@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_SERVICE_ID, CONF_SENSOR_NAMES, DEFAULT_SCAN_INTERVAL
+from .const import DOMAIN, CONF_SERVICE_ID, CONF_SENSOR_NAMES, CONF_PGM_CODE, DEFAULT_SCAN_INTERVAL
 from .jablotron_client import JablotronClient, JablotronAuthError
 
 _LOGGER = logging.getLogger(__name__)
@@ -90,18 +90,22 @@ class JablotronConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Determine default values for the form
         default_username = ""
         default_service_id = ""
+        default_pgm_code = ""
         if self._reauth_entry:
             default_username = self._reauth_entry.data.get(CONF_USERNAME, "")
             default_service_id = self._reauth_entry.data.get(CONF_SERVICE_ID, "")
+            default_pgm_code = self._reauth_entry.data.get(CONF_PGM_CODE, "")
         elif user_input:
             default_username = user_input.get(CONF_USERNAME, "")
             default_service_id = user_input.get(CONF_SERVICE_ID, "")
+            default_pgm_code = user_input.get(CONF_PGM_CODE, "")
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_USERNAME, default=default_username): str,
                 vol.Required(CONF_PASSWORD): str,
                 vol.Optional(CONF_SERVICE_ID, default=default_service_id): str,
+                vol.Optional(CONF_PGM_CODE, default=default_pgm_code): str,
             }
         )
 
@@ -211,6 +215,10 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
                 new_data[CONF_SERVICE_ID] = user_input[CONF_SERVICE_ID]
                 credentials_changed = True
 
+            if CONF_PGM_CODE in user_input and user_input[CONF_PGM_CODE] != self.config_entry.data.get(CONF_PGM_CODE):
+                new_data[CONF_PGM_CODE] = user_input[CONF_PGM_CODE]
+                credentials_changed = True
+
             # Update config entry data if credentials changed
             if credentials_changed:
                 self.hass.config_entries.async_update_entry(
@@ -241,6 +249,10 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_SERVICE_ID,
                         default=self.config_entry.data.get(CONF_SERVICE_ID, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_PGM_CODE,
+                        default=self.config_entry.data.get(CONF_PGM_CODE, ""),
                     ): str,
                     vol.Optional(
                         "scan_interval",

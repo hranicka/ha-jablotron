@@ -14,6 +14,7 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
   - Alarm sections (`sekce`) - armed/disarmed state
   - PGM outputs (`pgm`) - with smart device class detection
   - PIR motion sensors (`pir`)
+- **PGM switching support** - Control switchable PGM outputs (on/off)
 - **UI-based configuration** with option flow
 - **Intelligent retry backoff** (30 min on API errors)
 - **Supports multiple devices** via `service_id` (e.g., car, house, etc.)
@@ -81,7 +82,13 @@ The integration uses a sophisticated 4-step authentication process:
    Body: activeTab=heat&service_id={service_id}
    → Returns sensor data for the selected device
 
-6. Session Expiration Detection
+6. Control PGM Outputs (when switching)
+   POST https://www.jablonet.net/app/ja100/ajax/ovladani2.php
+   Body: section=PGM_7&status=1&code={pgm_code}&uid=PGM_7_prehled
+   → Switches PGM on (status=1) or off (status=0)
+   → Requires PGM control code configured during setup
+
+7. Session Expiration Detection
    If response: {"status": 300, ...}
    → Clear cookies and repeat steps 1-4 (automatic re-login)
 ```
@@ -105,11 +112,15 @@ The integration uses a sophisticated 4-step authentication process:
 
 **PGM Outputs** (`pgm`):
 ```json
-"6": {"stav": 1, "nazev": "Ventilátor", "stateName": "PGM_7", "reaction": "", ...}
+"6": {"stav": 1, "nazev": "Ventilátor", "stateName": "PGM_7", "reaction": "pgorSwitchOnOff", ...}
 ```
 - `stav == 1` → Active (ON)
 - `stav == 0` → Inactive (OFF)
 - Smart device class detection based on name keywords
+- **Binary Sensors**: All PGMs are shown as binary sensors
+- **Switches**: PGMs with `reaction: "pgorSwitchOnOff"` also appear as controllable switches
+  - Requires PGM control code to be configured
+  - Requires the user to have permission for the specific PGM
 
 **PIR Motion Sensors** (`pir`):
 ```json
@@ -124,7 +135,10 @@ The integration uses a sophisticated 4-step authentication process:
 ### During Setup
 1. **Credentials**: Email and password for jablonet.net
 2. **Service ID** (optional): Select which device to monitor (e.g., house, a car)
-3. **Temperature sensor names**: Customize each sensor (e.g., "Venku", "Kotel")
+3. **PGM Control Code** (optional): Numeric code required for switching PGM outputs on/off
+   - Only needed if you want to control switchable PGMs
+   - Similar to a password for PGM control
+4. **Temperature sensor names**: Customize each sensor (e.g., "Venku", "Kotel")
 
 ### Options (After Setup)
 Access via Settings → Devices & Services → Jablotron Web → Configure:
@@ -147,6 +161,7 @@ custom_components/jablotron_web/
 ├── jablotron_client.py   - API client, 4-step auth, session management
 ├── sensor.py             - Temperature sensors
 ├── binary_sensor.py      - Alarm sections, PGM outputs, PIR sensors
+├── switch.py             - Switchable PGM outputs (on/off control)
 ├── const.py              - Constants and API URLs
 ├── manifest.json         - Integration metadata
 └── strings.json          - UI translations
