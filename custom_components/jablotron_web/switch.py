@@ -87,10 +87,15 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
         self._pgm_id = pgm_id
         self._attr_name = f"Jablotron {pgm_name}"
         self._attr_unique_id = f"{entry_id}_pgm_switch_{pgm_id}"
+        self._optimistic_state: bool | None = None
 
     @property
     def is_on(self) -> bool | None:
         """Return true if the switch is on."""
+        # Use optimistic state if set (during pending operation)
+        if self._optimistic_state is not None:
+            return self._optimistic_state
+
         if (
             self.coordinator.data
             and "pgm" in self.coordinator.data
@@ -105,28 +110,54 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
+        # Store the current state in case we need to revert
+        previous_state = self.is_on
+
         try:
+            # Set an optimistic state immediately
+            self._optimistic_state = True
+            self.async_write_ha_state()
+
             _LOGGER.debug(f"Turning on PGM {self._pgm_id}")
             result = await self._client.control_pgm(self._pgm_id, 1)
             _LOGGER.info(f"PGM {self._pgm_id} turned on: {result}")
             
-            # Update coordinator data immediately
+            # Clear optimistic state and update from coordinator
+            self._optimistic_state = None
             await self.coordinator.async_request_refresh()
         except Exception as err:
             _LOGGER.error(f"Failed to turn on PGM {self._pgm_id}: {err}")
+            # Revert to previous state on failure
+            self._optimistic_state = previous_state
+            self.async_write_ha_state()
+            # Clear optimistic state after a moment
+            self._optimistic_state = None
             raise
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
+        # Store the current state in case we need to revert
+        previous_state = self.is_on
+
         try:
+            # Set an optimistic state immediately
+            self._optimistic_state = False
+            self.async_write_ha_state()
+
             _LOGGER.debug(f"Turning off PGM {self._pgm_id}")
             result = await self._client.control_pgm(self._pgm_id, 0)
             _LOGGER.info(f"PGM {self._pgm_id} turned off: {result}")
             
-            # Update coordinator data immediately
+            # Clear optimistic state and update from coordinator
+            self._optimistic_state = None
             await self.coordinator.async_request_refresh()
         except Exception as err:
             _LOGGER.error(f"Failed to turn off PGM {self._pgm_id}: {err}")
+            # Revert to previous state on failure
+            self._optimistic_state = previous_state
+            self.async_write_ha_state()
+            # Clear optimistic state after a moment
+            self._optimistic_state = None
             raise
 
     @property
