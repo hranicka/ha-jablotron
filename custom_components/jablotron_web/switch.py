@@ -24,6 +24,13 @@ async def async_setup_entry(
 
     switches = []
 
+    # Check if PGM code is configured - switches require it for control
+    pgm_code = entry.data.get("pgm_code", "")
+    if not pgm_code or not pgm_code.strip():
+        _LOGGER.info("PGM control code not configured - switches will not be created. Configure PGM code in integration options to enable PGM switching.")
+        async_add_entities(switches)
+        return
+
     # Get initial data to determine available switchable PGMs
     if coordinator.data and "pgm" in coordinator.data:
         # Check if the user has permissions to control PGMs
@@ -31,8 +38,9 @@ async def async_setup_entry(
         
         for pgm_id, pgm_data in coordinator.data["pgm"].items():
             # Only create a switch if:
-            # 1. PGM has a switchable reaction type
-            # 2. User has permission to control it
+            # 1. PGM code is configured (checked above)
+            # 2. PGM has a switchable reaction type
+            # 3. User has permission to control it
             reaction = pgm_data.get("reaction", "")
             state_name = pgm_data.get("stateName", "")
             has_permission = permissions.get(state_name, 0) == 1

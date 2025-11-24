@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, PGM_SWITCHABLE_REACTIONS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +25,15 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     binary_sensors = []
+
+    # Check if PGM code is configured - affects which PGMs become binary sensors vs switches
+    pgm_code = entry.data.get("pgm_code", "")
+    has_pgm_code = bool(pgm_code and pgm_code.strip())
+
+    if has_pgm_code:
+        _LOGGER.debug("PGM code is configured - switchable PGMs will be created as switches, not binary sensors")
+    else:
+        _LOGGER.debug("PGM code not configured - all PGMs will be created as binary sensors")
 
     # Get initial data to determine available binary sensors
     if coordinator.data:
@@ -42,7 +51,26 @@ async def async_setup_entry(
 
         # Add PGM sensors
         if "pgm" in coordinator.data:
+            permissions = coordinator.data.get("permissions", {})
+
             for pgm_id, pgm_data in coordinator.data["pgm"].items():
+                reaction = pgm_data.get("reaction", "")
+                state_name = pgm_data.get("stateName", "")
+                has_permission = permissions.get(state_name, 0) == 1
+
+                # Skip creating binary sensor if:
+                # 1. PGM code is configured AND
+                # 2. PGM is a switchable type AND
+                # 3. User has permission
+                # (These will be created as switches instead)
+                is_switchable = reaction in PGM_SWITCHABLE_REACTIONS
+                will_be_switch = has_pgm_code and is_switchable and has_permission
+
+                if will_be_switch:
+                    _LOGGER.debug(f"Skipping binary sensor for PGM {pgm_id} ({pgm_data.get('nazev')}) - will be created as switch instead (reaction: {reaction}, permission: {has_permission})")
+                    continue
+
+                _LOGGER.debug(f"Creating binary sensor for PGM {pgm_id} ({pgm_data.get('nazev')}) - reaction: {reaction}, switchable: {is_switchable}, permission: {has_permission}, has_code: {has_pgm_code}")
                 binary_sensors.append(
                     JablotronPGMBinarySensor(
                         coordinator,

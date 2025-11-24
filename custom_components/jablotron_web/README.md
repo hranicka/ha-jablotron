@@ -130,10 +130,13 @@ The integration uses a sophisticated 4-step authentication process:
 - `stav == 1` → Active (ON)
 - `stav == 0` → Inactive (OFF)
 - Smart device class detection based on name keywords
-- **Binary Sensors**: All PGMs are shown as binary sensors
-- **Switches**: PGMs with `reaction: "pgorSwitchOnOff"` also appear as controllable switches
-  - Requires PGM control code to be configured
-  - Requires the user to have permission for the specific PGM
+
+**Entity creation:**
+- **Without PGM code**: All PGMs appear as binary sensors (read-only monitoring)
+- **With PGM code**:
+  - Switchable PGMs (`reaction: "pgorSwitchOnOff"` + permission) → Created as **switches only**
+  - Non-switchable PGMs → Remain as binary sensors
+  - Note: Switchable PGMs are NOT created as both sensor and switch - only as switches
 
 **PIR Motion Sensors** (`pir`):
 ```json
@@ -147,9 +150,11 @@ The integration uses a sophisticated 4-step authentication process:
 
 ### During Setup
 1. **Credentials**: Email and password for jablonet.net
-2. **Service ID** (optional): Select which device to monitor (e.g., house, a car)
+2. **Service ID** (optional): Select which device to monitor (e.g., a house, a car)
 3. **PGM Control Code** (optional): Numeric code required for switching PGM outputs on/off
-   - Only needed if you want to control switchable PGMs
+   - **Required for switches**: Without this code, no switch entities will be created
+   - Binary sensors for PGMs will still be available for monitoring
+   - Can be added later via integration options (triggers automatic reload)
    - Similar to a password for PGM control
 4. **Temperature sensor names**: Customize each sensor (e.g., "Venku", "Kotel")
 
@@ -254,6 +259,8 @@ Restart Home Assistant after making changes.
 - Or manually reload: Settings → Devices & Services → Jablotron Web → ⋮ → Reload
 - Check that PGMs have `reaction: "pgorSwitchOnOff"` (see debug logs)
 - Verify you have permission to control the PGM
+- **If old binary sensor exists**: Delete the old `binary_sensor.jablotron_*` entity for that PGM, then reload
+- See [MIGRATION_BINARY_TO_SWITCH.md](../../../MIGRATION_BINARY_TO_SWITCH.md) for detailed migration steps
 
 **Frontend errors: "entity-picker.no_match" or "device-picker.no_match" (Czech language)**
 - These are **NOT** from this integration
