@@ -18,6 +18,7 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
 - **UI-based configuration** with option flow
 - **Intelligent retry backoff** (30 min on API errors)
 - **Supports multiple devices** via `service_id` (e.g., car, house, etc.)
+- **Reload service** - Easily refresh sensors and switches after updates
 
 ## Installation
 
@@ -52,6 +53,18 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
 2. Restart Home Assistant
 
 3. Configure (same as step 3 above)
+
+## Upgrading
+
+After updating the integration to a new version:
+
+1. **Automatic**: Restart Home Assistant (entities auto-discovered on startup)
+2. **Manual**: Use the reload service to discover new sensors/switches:
+   - Developer Tools → Services
+   - Select: `Jablotron Web: Reload Integration`
+   - Click "Call Service"
+
+See [UPGRADE_GUIDE.md](../../../UPGRADE_GUIDE.md) for detailed upgrade instructions.
 
 ## How It Works
 
@@ -167,6 +180,30 @@ custom_components/jablotron_web/
 └── strings.json          - UI translations
 ```
 
+## Services
+
+### `jablotron_web.reload`
+
+Reloads all Jablotron Web integrations to discover new sensors and switches.
+
+**Use cases:**
+- After updating the integration to a new version
+- After adding PGM control code
+- After changing Jablotron system configuration
+- To force refresh of available entities
+
+**Example:**
+```yaml
+service: jablotron_web.reload
+```
+
+**When to use:**
+- You updated from a version without PGM switches → Reload to discover switches
+- You added new sensors/PGMs in your Jablotron system → Reload to discover them
+- You changed configuration options → Reload happens automatically, but you can force it
+
+**Note:** Reloading preserves all entity configurations and states.
+
 ## Troubleshooting
 
 ### Enable Debug Logging
@@ -210,6 +247,13 @@ Restart Home Assistant after making changes.
 - Check coordinator data in debug logs
 - Verify sensors exist in your Jablotron system
 - Ensure the correct service_id is configured
+
+**New switches do not appear after an update**
+- Add PGM control code in integration options
+- Use the reload service: `jablotron_web.reload`
+- Or manually reload: Settings → Devices & Services → Jablotron Web → ⋮ → Reload
+- Check that PGMs have `reaction: "pgorSwitchOnOff"` (see debug logs)
+- Verify you have permission to control the PGM
 
 **Frontend errors: "entity-picker.no_match" or "device-picker.no_match" (Czech language)**
 - These are **NOT** from this integration

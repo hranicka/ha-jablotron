@@ -10,6 +10,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DOMAIN
 from .jablotron_client import JablotronAuthError, JablotronClient
+from . import services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +52,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
     }
 
+    # Register services on the first entry
+    if len(hass.data[DOMAIN]) == 1:
+        await services.async_setup_services(hass)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -72,5 +77,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client = hass.data[DOMAIN][entry.entry_id]["client"]
         await client.async_close()
         hass.data[DOMAIN].pop(entry.entry_id)
+
+        # Unregister services if this was the last entry
+        if not hass.data[DOMAIN]:
+            await services.async_unload_services(hass)
 
     return unload_ok

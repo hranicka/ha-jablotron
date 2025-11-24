@@ -1,0 +1,5 @@
+reload:
+  name: Reload Integration
+  description: Reload all Jablotron Web integrations to discover new sensors and switches. Use this after updating the component or changing configuration.
+  fields: {}
+
