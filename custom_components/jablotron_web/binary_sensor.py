@@ -53,6 +53,8 @@ async def async_setup_entry(
         if "pgm" in coordinator.data:
             permissions = coordinator.data.get("permissions", {})
 
+            _LOGGER.info(f"Evaluating {len(coordinator.data['pgm'])} PGMs for binary sensor creation (PGM code {'configured' if has_pgm_code else 'NOT configured'})")
+
             for pgm_id, pgm_data in coordinator.data["pgm"].items():
                 reaction = pgm_data.get("reaction", "")
                 state_name = pgm_data.get("stateName", "")
@@ -92,6 +94,9 @@ async def async_setup_entry(
                     )
                 )
 
+    # Count PGM binary sensors
+    pgm_binary_count = sum(1 for sensor in binary_sensors if isinstance(sensor, JablotronPGMBinarySensor))
+    _LOGGER.info(f"Created {pgm_binary_count} PGM binary sensor(s), {len(binary_sensors)} total binary sensors")
     async_add_entities(binary_sensors)
 
 

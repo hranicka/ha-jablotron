@@ -36,6 +36,8 @@ async def async_setup_entry(
         # Check if the user has permissions to control PGMs
         permissions = coordinator.data.get("permissions", {})
         
+        _LOGGER.info(f"Evaluating {len(coordinator.data['pgm'])} PGMs for switch creation (PGM code configured)")
+
         for pgm_id, pgm_data in coordinator.data["pgm"].items():
             # Only create a switch if:
             # 1. PGM code is configured (checked above)
@@ -44,7 +46,10 @@ async def async_setup_entry(
             reaction = pgm_data.get("reaction", "")
             state_name = pgm_data.get("stateName", "")
             has_permission = permissions.get(state_name, 0) == 1
-            
+            pgm_name = pgm_data.get("nazev", f"PGM {pgm_id}")
+
+            _LOGGER.debug(f"PGM {pgm_id} ({pgm_name}): reaction={reaction}, permission={has_permission}, switchable={reaction in PGM_SWITCHABLE_REACTIONS}")
+
             if reaction in PGM_SWITCHABLE_REACTIONS and has_permission:
                 switches.append(
                     JablotronPGMSwitch(
@@ -52,13 +57,16 @@ async def async_setup_entry(
                         client,
                         entry.entry_id,
                         pgm_id,
-                        pgm_data.get("nazev", f"PGM {pgm_id}"),
+                        pgm_name,
                     )
                 )
-                _LOGGER.debug(f"Adding switchable PGM {pgm_id}: {pgm_data.get('nazev')}")
+                _LOGGER.info(f"✅ CREATING SWITCH for PGM {pgm_id}: {pgm_name} (reaction: {reaction})")
             elif reaction in PGM_SWITCHABLE_REACTIONS and not has_permission:
-                _LOGGER.info(f"Skipping PGM {pgm_id} - no permission to control")
+                _LOGGER.info(f"⏭ SKIPPING PGM {pgm_id} ({pgm_name}) - switchable but no permission")
+            else:
+                _LOGGER.debug(f"⏭ SKIPPING PGM {pgm_id} ({pgm_name}) - not switchable (reaction: {reaction})")
 
+    _LOGGER.info(f"Created {len(switches)} switch(es) for PGMs")
     async_add_entities(switches)
 
 
