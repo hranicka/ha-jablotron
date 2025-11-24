@@ -54,17 +54,6 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
 
 3. Configure (same as step 3 above)
 
-## Upgrading
-
-After updating the integration to a new version:
-
-1. **Automatic**: Restart Home Assistant (entities auto-discovered on startup)
-2. **Manual**: Use the reload service to discover new sensors/switches:
-   - Developer Tools → Services
-   - Select: `Jablotron Web: Reload Integration`
-   - Click "Call Service"
-
-See [UPGRADE_GUIDE.md](../../../UPGRADE_GUIDE.md) for detailed upgrade instructions.
 
 ## How It Works
 
@@ -260,7 +249,6 @@ Restart Home Assistant after making changes.
 - Check that PGMs have `reaction: "pgorSwitchOnOff"` (see debug logs)
 - Verify you have permission to control the PGM
 - **If old binary sensor exists**: Delete the old `binary_sensor.jablotron_*` entity for that PGM, then reload
-- See [MIGRATION_BINARY_TO_SWITCH.md](../../../MIGRATION_BINARY_TO_SWITCH.md) for detailed migration steps
 
 **Frontend errors: "entity-picker.no_match" or "device-picker.no_match" (Czech language)**
 - These are **NOT** from this integration
