@@ -22,31 +22,36 @@ sensor.py + binary_sensor.py (Entities)
 
 **Purpose**: Entry point for the integration, manages setup and data updates.
 
+**Platforms**: `SENSOR`, `BINARY_SENSOR`, `SWITCH`
+
 **Key Functions**:
 
 - **`async_setup_entry(hass, entry)`**
-  - Called when integration is loaded
-  - Creates `JablotronClient` with credentials from `entry.data`
-  - Sets up `DataUpdateCoordinator` for periodic updates
-  - Registers platforms (sensor, binary_sensor)
-  - **Edit here**: Change update logic, add new platforms
-
-- **`async_unload_entry(hass, entry)`**
-  - Called when integration is removed
-  - Unloads all platforms using `async_unload_platforms`
-  - Calls `client.async_close()` to close aiohttp session
-  - Cleans up stored data from `hass.data[DOMAIN]`
+  - Extracts credentials: `username`, `password`, `service_id`, `pgm_code`
+  - Creates `JablotronClient(username, password, service_id, hass, pgm_code)`
+  - Sets up `DataUpdateCoordinator`:
+    - Update method: `client.gethe the t_status()`
+    - Interval: from `entry.options["scan_interval"]` (default 300s)
+  - Performs first refresh
+  - Registers services on first entry (via `services.async_setup_services()`)
+  - Forwards setup to all platforms
+  - Adds update listener for options changes
 
 - **`async_reload_entry(hass, entry)`**
-  - Called when options are changed
-  - Triggers reload of the integration
-  - Used by update listener for scan interval changes
+  - Called when options change
+  - Reloads the integration to apply new settings
+
+- **`async_unload_entry(hass, entry)`**
+  - Unloads all platforms
+  - Closes client session via `client.async_close()`
+  - Unregisters services if last entry
+  - Cleans up `hass.data[DOMAIN]`
 
 **Data Flow**:
 ```python
-entry.data → {username, password, service_id, sensor_names}
+entry.data → {username, password, service_id, pgm_code, sensor_names}
     ↓
-JablotronClient(username, password, service_id, hass)
+JablotronClient(username, password, service_id, hass, pgm_code)
     ↓
 DataUpdateCoordinator(update_method=client.get_status, interval=300s)
     ↓
@@ -56,10 +61,9 @@ hass.data[DOMAIN][entry_id] → {"coordinator": coordinator, "client": client}
 ```
 
 **Error Handling**:
-- `UpdateFailed` exception → Coordinator marks entities as unavailable
-- `ConfigEntryAuthFailed` exception → Triggers reauth flow
-- Re-login and retry logic handled in `jablotron_client.py`
-- Client session cleanup on unload via `async_close()`
+- `JablotronAuthError` → Raises `ConfigEntryAuthFailed` → Triggers reauth flow
+- Other exceptions → Raises `UpdateFailed` → Entities unavailable, retries on next interval
+- Session management handled in `jablotron_client.py`
 
 ---
 
@@ -67,51 +71,35 @@ hass.data[DOMAIN][entry_id] → {"coordinator": coordinator, "client": client}
 
 **Purpose**: Handles user input during setup and options configuration.
 
-**Key Classes**:
-
 #### `JablotronConfigFlow`
 Manages initial setup flow.
 
 **Step 1: `async_step_user(user_input)`**
-- Shows credential form
-- Validates by attempting login
+- Form fields: `username`, `password`, `service_id` (optional), `pgm_code` (optional)
+- Validates credentials by attempting login
 - On success → proceeds to sensor naming
-- **On login failure**: Shows error `invalid_auth` or `cannot_connect`
-- **Edit here**: Add/remove credential fields
+- **Errors**: `invalid_auth`, `cannot_connect`, `already_configured`
 
 **Step 2: `async_step_sensors(user_input)`**
-- Discovers sensors by fetching data from API
-- Shows form with one field per sensor
-- Stores custom names in `entry.data[CONF_SENSOR_NAMES]`
-- **Edit here**: Customize sensor naming UI
-
-**Error Codes**:
-```python
-"invalid_auth" → Wrong username/password
-"cannot_connect" → Network error or API down
-"already_configured" → Email already added
-```
-
-#### `JablotronOptionsFlowHandler`
-Allows changing a scan interval after setup.
-
-**`async_step_init(user_input)`**
-- Shows scan interval option
-- Updates `entry.options["scan_interval"]`
-- **Edit here**: Add more configurable options
-
-**Credential Update Flow**:
-1. User enters a new username / password / service_id (optional fields)
-2. If any credential changed → update `entry.data`
-3. Reload integration to create a new client with new credentials
-4. Return success
+- Fetches data from API to discover temperature sensors
+- Shows form with one field per sensor for custom naming
+- Stores names in `entry.data[CONF_SENSOR_NAMES]`
+- Creates config entry
 
 **Reauth Flow** (`async_step_reauth`):
 - Triggered when `ConfigEntryAuthFailed` is raised
-- Shows credential form pre-filled with existing username/service_id
+- Pre-fills existing username/service_id
 - Tests new credentials
-- Updates entry data and reloads on success
-- Shows error if credentials are still invalid
+- Updates `entry.data` and reloads on success
+
+#### `JablotronOptionsFlowHandler`
+Allows changing settings after setup.
+
+**`async_step_init(user_input)`**
+- Options: `scan_interval`, `username`, `password`, `service_id`, `pgm_code`
+- All credential fields are optional (only update if provided)
+- If credentials change → updates `entry.data` and triggers reload
+- If only scan_interval changes → updates `entry.options`
 
 ---
 
@@ -119,97 +107,482 @@ Allows changing a scan interval after setup.
 
 **Purpose**: Handles all HTTP communication with Jablotron API.
 
-**Key Class**: `JablotronClient`
+**Class**: `JablotronClient`
 
 **Initialization**:
 ```python
-__init__(username, password, service_id, hass)
-    → Stores credentials
-    → Stores hass reference
+__init__(username, password, service_id, hass, pgm_code)
+    → Stores credentials and PGM code
     → Initializes session = None (created on demand)
     → Initializes _next_retry_time = None (for retry backoff)
 ```
 
-**Session Management**:
-- `async _ensure_session()`: Creates ClientSession with CookieJar if needed
-- `async async_close()`: Closes aiohttp session (called on unload)
-
-**Methods**:
+**Key Methods**:
 
 #### `async login()`
-**Flow** (Multi-step authentication):
-1. Clear all cookies from session
-2. GET `https://www.jablonet.net` → Get initial PHPSESSID cookie
-3. POST `/ajax/login.php` with credentials → Authenticate
-4. GET `/cloud` → Get `lastMode` cookie
-5. GET `/app/ja100?service={service_id}` → Finalize session for JA100 app
+4-step authentication process:
+1. GET `https://www.jablonet.net` → Initial PHPSESSID cookie
+2. POST `/ajax/login.php` → Authenticate credentials
+3. GET `/cloud` → Get lastMode cookie
+4. GET `/app/ja100?service={service_id}` → Initialize JA100 session
 
-**Returns**: Nothing (raises exception on failure)
-
-**Raises**:
-- `JablotronAuthError` on any step failure
-- Includes detailed logging at each step
-
-**When login fails**:
-- Raises `JablotronAuthError` with a descriptive message
-- Config flow catches error and shows `invalid_auth` to user
-- Coordinator catches error and triggers reauth flow
-
-**Edit here**: Change login endpoint, add 2FA support
+**Raises**: `JablotronAuthError` on failure
 
 #### `async get_status()`
-**Flow**:
-1. Check retry backoff timer (30 min cooldown if API was down)
-2. Call `_api_request_handler(_fetch_status)`
-3. Handler manages session expiry and retries
+Fetches the current state of all system components.
+- Calls `_api_request_handler(_fetch_status)`
+- Returns dict with `teplomery`, `pgm`, `sekce`, `pir`, `permissions`, etc.
+- **Raises**: `JablotronAuthError` for reauth, `Exception` for update failures
 
-**Returns**: Dict with `teplomery`, `pgm`, `sekce`, `pir`, etc.
-
-**Raises**:
-- `JablotronAuthError` - triggers reauth flow in Home Assistant
-- Generic `Exception` - marks entities unavailable, retries later
-
-**Edit here**: Change retry timeout, add caching
-
-#### `async _fetch_status()`
-Internal method that:
-1. Ensures session exists
-2. POST `/app/ja100/ajax/stav.php` with cookies from session
-3. Payload: `activeTab=heat&service_id={service_id}`
-4. Returns parsed JSON response
-
-**Edit here**: Change API endpoint, modify payload
+#### `async control_pgm(pgm_id, status)`
+Controls a PGM output (turn on/off).
+- **Args**: `pgm_id` (e.g., "6"), `status` (0=off, 1=on)
+- **Returns**: Response dict with `{"result": 0/1, "authorization": 200, ...}`
+- Uses `_api_request_handler(_control_pgm)` for session management
 
 #### `async _api_request_handler(fetch_func)`
-Generic handler for all API requests:
-1. Check if in retry backoff period (30 min cooldown)
-2. Ensure session exists
-3. If no cookies, call `login()` first
-4. Call `fetch_func()` to get data
-5. If `status == 300` (session expired):
-   - Clear cookies and call `login()` again
-   - Retry `fetch_func()`
-6. If still `status == 300` after retry → raise `JablotronAuthError`
-7. On success: Clear retry timer and return data
-8. On error: Set 30-minute retry backoff
+Generic wrapper for all API requests:
+1. Checks retry backoff period (30min after errors)
+2. Ensures session exists, logs in if needed
+3. Executes `fetch_func()`
+4. If `status == 300` → Session expired, re-login and retry
+5. On success: Clears retry timer
+6. On error: Sets 30-minute backoff
 
-**Helper Methods**:
+**Session Management**:
+- Automatic re-login on session expiration (`status: 300`)
+- Cookie jar maintains PHPSESSID and lastMode
+- `async_close()` cleans up aiohttp session
 
-- **`_get_headers(referer)`**: Builds request headers with User-Agent, referer, etc.
-- **`async _visit_homepage()`**: Gets initial cookies from homepage
-- **`async _ensure_session()`**: Creates aiohttp ClientSession if needed
-- **`async async_close()`**: Closes aiohttp session
+---
 
-**Session Expiration Detection**:
-```python
-if data.get("status") == 300:
-    # Session expired, re-login needed
+### 3a. Jablotron API Reference
+
+**Important**: All API endpoints return HTTP 200 OK status even on errors. Error conditions are indicated in the JSON response body (e.g., `{"status": 300}` for expired session).
+
+#### Authentication Flow
+
+The Jablotron API uses cookie-based session authentication. Full login requires 4 steps:
+
+**Step 1: Get Initial Session Cookie**
+```bash
+GET https://www.jablonet.net
+```
+- **Purpose**: Obtain initial `PHPSESSID` cookie
+- **Response**: HTML page with Set-Cookie header
+- **Cookies Set**: `PHPSESSID`
+
+**Step 2: Authenticate**
+```bash
+POST https://www.jablonet.net/ajax/login.php
+Content-Type: application/x-www-form-urlencoded
+
+login=email@example.com&heslo=password&aStatus=200&loginType=Login
+```
+- **Purpose**: Authenticate user credentials
+- **Required Headers**:
+  - `User-Agent`: Any modern browser UA
+  - `Content-Type`: `application/x-www-form-urlencoded`
+  - `X-Requested-With`: `XMLHttpRequest`
+  - `Origin`: `https://www.jablonet.net`
+  - `Referer`: `https://www.jablonet.net/`
+- **Cookies Required**: `PHPSESSID` (from Step 1)
+- **Response**: JSON (usually empty on success) + updated `PHPSESSID` cookie
+- **Cookies Set**: `PHPSESSID` (authenticated)
+
+**Step 3: Get lastMode Cookie**
+```bash
+GET https://www.jablonet.net/cloud
+```
+- **Purpose**: Obtain `lastMode` cookie for app access
+- **Cookies Required**: Authenticated `PHPSESSID`
+- **Response**: HTML redirect page
+- **Cookies Set**: `lastMode`
+
+**Step 4: Initialize JA100 App Session**
+```bash
+GET https://www.jablonet.net/app/ja100?service={service_id}
+```
+- **Purpose**: Finalize session for JA100 app API access
+- **Cookies Required**: `PHPSESSID`, `lastMode`
+- **Response**: HTML application page
+- **Note**: `service_id` is optional but recommended for multiservice accounts
+
+**Session Lifetime**:
+- Sessions expire after inactivity (typically 30-60 minutes)
+- Expired sessions return `{"status": 300, "url": "..."}` in API responses
+- Must repeat the full login flow to obtain a new session
+
+---
+
+#### State Retrieval API (stav.php)
+
+**Endpoint**: `POST https://www.jablonet.net/app/ja100/ajax/stav.php`
+
+**Purpose**: Retrieve the current state of all system components (sections, PGMs, sensors, PIRs, alarms, troubles)
+
+**Required Headers**:
+```
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0
+Accept: application/json, text/javascript, */*; q=0.01
+Accept-Language: en-US,en;q=0.5
+Content-Type: application/x-www-form-urlencoded
+X-Requested-With: XMLHttpRequest
+Origin: https://www.jablonet.net
+Referer: https://www.jablonet.net/app/ja100?service={service_id}
+Cookie: PHPSESSID=...; lastMode=...
 ```
 
-**Retry Backoff**:
-- On API error (not auth): Sets `_next_retry_time = now + 1800` (30 minutes)
-- Prevents hammering API when service is down
-- Logged message shows time until next retry
+**Request Body**:
+```
+activeTab=heat
+```
+- **activeTab**: Tab context (use `heat` for full data)
+
+**Successful Response** (`HTTP 200 OK`):
+```json
+{
+  "status": 200,
+  "termostaty": [],
+  "elektromery": [],
+  "sekce": {
+    "4": {
+      "stav": 0,
+      "nazev": "Garáž",
+      "stateName": "STATE_5",
+      "time": "30.10.2025 - 08:54",
+      "active": 1
+    },
+    "0": {
+      "stav": 0,
+      "nazev": "Vše",
+      "stateName": "STATE_1",
+      "time": "16.11.2025 - 14:34",
+      "active": 1
+    }
+  },
+  "pgm": {
+    "6": {
+      "stav": 0,
+      "nazev": "Osvětlení",
+      "stateName": "PGM_7",
+      "ts": 1764068252,
+      "reaction": "pgorSwitchOnOff",
+      "time": "today - 11:57",
+      "active": 1
+    },
+    "15": {
+      "stav": 0,
+      "nazev": "Vrata",
+      "stateName": "PGM_16",
+      "ts": 1763300203,
+      "reaction": "pgorPulse",
+      "time": "16.11.2025 - 14:36",
+      "active": 1
+    }
+  },
+  "moduly": [],
+  "alarms": [],
+  "troubles": [
+    {
+      "type": "TROUBLE",
+      "message": "Periphery battery low - Periphery Teplota venku",
+      "date": "22.11.2025 04:32"
+    }
+  ],
+  "tampers": [],
+  "service": 0,
+  "sdc": [],
+  "common": [],
+  "teplomery": {
+    "040": {
+      "stateName": "HEAT_40",
+      "value": 1.3,
+      "ts": 1764069354
+    },
+    "046": {
+      "stateName": "HEAT_46",
+      "value": 40.8,
+      "ts": 1764069379
+    }
+  },
+  "pir": {
+    "5": {
+      "stateName": "PPIR_6790289",
+      "nazev": "PIR Chodba",
+      "active": 0,
+      "last_pic": -1,
+      "type": "JA-160PC"
+    },
+    "6": {
+      "stateName": "PPIR_6790397",
+      "nazev": "PIR Vstup",
+      "active": 1,
+      "last_pic": -1,
+      "type": "JA-120PC"
+    }
+  },
+  "tz": "Europe/Prague",
+  "prava": 0,
+  "permissions": {
+    "PGM_1": 0,
+    "PGM_7": 1,
+    "STATE_1": 1,
+    "STATE_2": 0
+  },
+  "timeStamp": 1764069529,
+  "vypis": []
+}
+```
+
+**Error Response - Session Expired** (`HTTP 200 OK`):
+```json
+{
+  "status": 300,
+  "url": "https://www.jablonet.net/app/ja100?service="
+}
+```
+- **status**: `300` indicates session expired
+- **Action**: Must re-authenticate (repeat login flow)
+
+**Response Fields Reference**:
+
+- **status**: `200` = success, `300` = session expired
+- **sekce**: Alarm sections (armed/disarmed state)
+  - `stav`: `0` = disarmed, `1` = armed
+  - `nazev`: Section name
+  - `stateName`: API identifier (e.g., `STATE_1`)
+  - `time`: Last state change timestamp (human-readable)
+  - `active`: `1` = section is active/available
+
+- **pgm**: PGM (Programmable Outputs)
+  - `stav`: `0` = off/inactive, `1` = on/active
+  - `nazev`: PGM name
+  - `stateName`: API identifier (e.g., `PGM_7`)
+  - `ts`: Unix timestamp of last state change
+  - `reaction`: Output type
+    - `pgorSwitchOnOff`: Bistable switch (on/off control)
+    - `pgorPulse`: Momentary pulse (auto-resets)
+    - `pgorCopy`: Mirrors another device state
+  - `time`: Human-readable last change time
+  - `active`: `1` = PGM is active/available
+
+- **teplomery**: Temperature sensors
+  - `value`: Temperature in °C
+  - `ts`: Unix timestamp of last reading
+  - `stateName`: API identifier (e.g., `HEAT_40`)
+
+- **pir**: PIR motion sensors
+  - `nazev`: Sensor name
+  - `active`: `0` = no motion, `1` = motion detected
+  - `last_pic`: Picture ID (-1 if no camera)
+  - `type`: Device model (e.g., `JA-120PC`)
+  - `stateName`: API identifier (e.g., `PPIR_6790289`)
+
+- **permissions**: User control permissions
+  - Key: `stateName` (e.g., `PGM_7`, `STATE_1`)
+  - Value: `0` = no permission, `1` = can control
+  - Used to determine if switch entities should be created
+
+- **troubles**: Active system troubles/warnings
+- **alarms**: Recent alarms
+- **tampers**: Tamper events
+- **timeStamp**: Server timestamp (Unix)
+- **tz**: Timezone
+
+---
+
+#### Control API (ovladani2.php)
+
+**Endpoint**: `POST https://www.jablonet.net/app/ja100/ajax/ovladani2.php`
+
+**Purpose**: Control PGM outputs (turn on/off, trigger pulse)
+
+**Required Headers**:
+```
+User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0
+Accept: application/json, text/javascript, */*; q=0.01
+Accept-Language: en-US,en;q=0.5
+Content-Type: application/x-www-form-urlencoded
+X-Requested-With: XMLHttpRequest
+Origin: https://www.jablonet.net
+Referer: https://www.jablonet.net/app/ja100?service={service_id}
+Cookie: PHPSESSID=...; lastMode=...
+```
+
+**Request Body** (Turn OFF example):
+```
+section=PGM_7&status=0&code=1234&uid=PGM_7_prehled
+```
+
+**Request Body** (Turn ON example):
+```
+section=PGM_7&status=1&code=1234&uid=PGM_7_prehled
+```
+
+**Parameters**:
+- **section**: PGM stateName (e.g., `PGM_7` for PGM ID `6`)
+  - Format: `PGM_{id+1}` (PGM ID 6 → PGM_7)
+- **status**: Target state
+  - `0` = turn off / deactivate
+  - `1` = turn on / activate
+- **code**: User's PGM control code (4-digit PIN)
+- **uid**: UI identifier, format: `{section}_prehled`
+
+**Successful Response** (`HTTP 200 OK`):
+```json
+{
+  "ts": 1764068250,
+  "id": "PGM_7",
+  "authorization": 200,
+  "result": 0,
+  "responseCode": 200
+}
+```
+
+**Response Fields**:
+- **ts**: Unix timestamp of the state change
+- **id**: PGM stateName that was controlled
+- **authorization**: `200` = authorized, other = permission denied
+- **result**: New state after command
+  - `0` = PGM is now off
+  - `1` = PGM is now on
+- **responseCode**: `200` = success, other = error
+
+**Error Response - Unauthorized** (`HTTP 200 OK`):
+```json
+{
+  "ts": 1764068250,
+  "id": "PGM_7",
+  "authorization": 403,
+  "result": 0,
+  "responseCode": 403
+}
+```
+- **authorization**: `403` = wrong PGM code or no permission
+- **responseCode**: `403` = authorization failed
+
+**Error Response - Session Expired** (`HTTP 200 OK`):
+```json
+{
+  "status": 300,
+  "url": "https://www.jablonet.net/app/ja100?service="
+}
+```
+- Same as stav.php - must re-authenticate
+
+**Important Notes**:
+- The `result` field in the response contains the **actual new state** from the server
+- Always use this value to update the local state (don't assume command succeeded)
+- For `pgorPulse` type PGMs, state may return to 0 automatically after pulse
+- For `pgorSwitchOnOff` type PGMs, state persists until changed
+- Invalid PGM code returns authorization error, not session error
+
+---
+
+#### PGM ID Mapping
+
+**Important**: PGM IDs in the API are offset by 1:
+- **In `stav.php` response**: PGM with key `"6"` has `stateName: "PGM_7"`
+- **In `ovladani2.php` request**: Must use `section=PGM_7` to control PGM ID 6
+- **Formula**: `stateName = "PGM_" + (pgm_id + 1)`
+
+**Example**:
+```python
+pgm_id = "6"  # From stav.php response key
+state_name = f"PGM_{int(pgm_id) + 1}"  # "PGM_7"
+# Use "PGM_7" in control requests
+```
+
+---
+
+#### PGM Reaction Types
+
+Different PGM types behave differently when controlled:
+
+**`pgorSwitchOnOff`** (Bistable Switch):
+- Can be turned ON (status=1) and OFF (status=0)
+- State persists until changed
+- Example: Fan, heating valve, lights
+- **Create switch entities** for this type
+
+**`pgorPulse`** (Momentary):
+- Activates briefly, then auto-resets to OFF
+- Sending status=1 triggers pulse, returns to 0
+- Example: Doorbell, gate trigger, lock pulse
+- **Create switch entities** if the user wants manual control
+- State always returns to 0 after pulse duration
+
+**`pgorCopy`** (Mirror/Sensor):
+- Mirrors the state of another device (door sensor, etc.)
+- Cannot be controlled via API
+- Read-only state
+- Example: Door/window contact, gate position
+- **Create binary sensors** only (read-only)
+
+**Switchable Reactions** (can be controlled):
+- `pgorSwitchOnOff`
+- `pgorPulse`
+
+**Non-Switchable Reactions** (read-only):
+- `pgorCopy`
+- Others (if any)
+
+---
+
+#### API Error Handling Best Practices
+
+1. **Always check HTTP status is 200** (but errors still in JSON body)
+2. **Check response JSON structure**:
+   - If `status: 300` → Session expired, re-login
+   - If `authorization: 403` → Wrong PGM code or no permission
+   - If `responseCode: 200` → Success
+3. **Use response `result` field** for actual state (don't assume)
+4. **Handle network errors** with retry backoff
+5. **Rate limiting**: Avoid hammering API (use 30min backoff on errors)
+
+---
+
+#### Example: Complete Control Flow
+
+```python
+# 1. Get current state
+response = POST stav.php
+if response["status"] == 300:
+    # Session expired - re-login
+    login()
+    response = POST stav.php
+
+# 2. Check permission
+pgm_id = "6"
+state_name = f"PGM_{int(pgm_id) + 1}"  # "PGM_7"
+has_permission = response["permissions"].get(state_name) == 1
+if not has_permission:
+    raise Exception("No permission to control this PGM")
+
+# 3. Control PGM
+control_response = POST ovladani2.php
+    section=PGM_7
+    status=1
+    code=1234
+    uid=PGM_7_prehled
+
+# 4. Process response
+if control_response.get("status") == 300:
+    # Session expired during control
+    login()
+    # Retry control
+    
+if control_response.get("authorization") != 200:
+    raise Exception("Authorization failed - wrong PGM code")
+    
+if control_response.get("responseCode") != 200:
+    raise Exception("Control failed")
+
+# 5. Update the local state with an actual result
+new_state = control_response["result"]  # 0 or 1
+# Update coordinator data immediately with this authoritative state
+```
 
 ---
 
@@ -311,26 +684,72 @@ active == 0 → OFF (No motion)
 
 ---
 
-### 6. `const.py` - Constants & Configuration
+### 6. `switch.py` - Switch Platform (PGM Control)
+
+**Purpose**: Creates switch entities for controllable PGM outputs (bistable and pulse types).
+
+**Key Function**: `async_setup_entry(hass, entry, async_add_entities)`
+
+**Flow**:
+1. Check if PGM control code is configured
+2. Get coordinator data and permissions
+3. Loop through `coordinator.data["pgm"]`
+4. For each PGM with a switchable reaction type and permission:
+   - Create `JablotronPGMSwitch`
+5. Add switch entities to Home Assistant
+
+**Class**: `JablotronPGMSwitch(CoordinatorEntity, SwitchEntity)`
+
+**Key Methods**:
+
+- **`_async_control_pgm(turn_on: bool)`**: Shared logic for on/off control
+  - Sets optimistic state (freezes coordinator updates during operation)
+  - Calls `client.control_pgm(pgm_id, command)`
+  - Processes response and updates coordinator data immediately
+  - Requests full refresh for other entities
+  - Handles errors with state reversion
+
+- **`async_turn_on()`**: Calls `_async_control_pgm(turn_on=True)`
+- **`async_turn_off()`**: Calls `_async_control_pgm(turn_on=False)`
+
+**State Management**:
+- Uses optimistic state during control operation
+- Freezes entity to prevent coordinator overwrites
+- Processes control response for immediate state update
+- Triggers full refresh after control completes
+
+**Key Properties**:
+- **`is_on`**: Returns optimistic state during operation, otherwise from coordinator data
+- **`_handle_coordinator_update()`**: Blocks updates while optimistic state is set
+
+**Edit here**: Add support for the section arming/disarming
+
+---
+
+### 7. `const.py` - Constants & Configuration
 
 **Purpose**: Centralized configuration constants.
 
 **Constants**:
 
 ```python
-DOMAIN = "jablotron_web"           # Integration domain
-CONF_USERNAME = "username"          # Config key
-CONF_PASSWORD = "password"          # Config key
-CONF_SERVICE_ID = "service_id"      # Config key
-CONF_SENSOR_NAMES = "sensor_names"  # Config key
-DEFAULT_SCAN_INTERVAL = 300         # Default update interval (seconds)
+DOMAIN = "jablotron_web"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
+CONF_SERVICE_ID = "service_id"
+CONF_SENSOR_NAMES = "sensor_names"
+CONF_PGM_CODE = "pgm_code"
+DEFAULT_SCAN_INTERVAL = 300
 
+# API URLs
 API_BASE_URL = "https://www.jablonet.net"
 API_LOGIN_URL = f"{API_BASE_URL}/ajax/login.php"
 API_STATUS_URL = f"{API_BASE_URL}/app/ja100/ajax/stav.php"
-```
+API_CONTROL_URL = f"{API_BASE_URL}/app/ja100/ajax/ovladani2.php"
 
-**Edit here**: Add new constants, change defaults, add API endpoints
+# PGM reactions that support switching
+PGM_SWITCHABLE_REACTIONS = ["pgorSwitchOnOff", "pgorPulse"]
+```
 
 ---
 
@@ -345,7 +764,7 @@ config_flow.async_step_sensors() → Name sensors
     ↓
 __init__.async_setup_entry()
     ↓
-Create JablotronClient
+Create JablotronClient(username, password, service_id, hass, pgm_code)
     ↓
 Create DataUpdateCoordinator
     ↓
@@ -357,14 +776,22 @@ JablotronClient.get_status()
     ├─ If status == 300 → login() + retry
     └─ Return data
     ↓
-coordinator.data = {teplomery: {...}, pgm: {...}}
+coordinator.data = {teplomery: {...}, pgm: {...}, sekce: {...}, pir: {...}, permissions: {...}}
     ↓
-    ├─ sensor.async_setup_entry() → Create temperature entities
-    └─ binary_sensor.async_setup_entry() → Create PGM entities
+    ├─ sensor.async_setup_entry() → Create temperature sensors
+    ├─ binary_sensor.async_setup_entry() → Create section, PGM, PIR binary sensors
+    └─ switch.async_setup_entry() → Create PGM switches (if pgm_code configured)
     ↓
 Entities read from coordinator.data
     ↓
 Every 300s: coordinator triggers update → repeat get_status()
+    ↓
+User switches PGM:
+    ├─ switch._async_control_pgm() → Freeze state
+    ├─ client.control_pgm(pgm_id, status) → Send command
+    ├─ Process response → Update coordinator.data immediately
+    ├─ coordinator.async_request_refresh() → Full sync
+    └─ Unfreeze state
 ```
 
 ---
@@ -415,7 +842,7 @@ Every 300s: coordinator triggers update → repeat get_status()
 **Where**: `sensor.py` / `binary_sensor.py`
 
 **Causes**:
-- Sensor removed from system
+- Sensor removed from a system
 - API response changed
 - Network error
 
@@ -456,7 +883,7 @@ Every 300s: coordinator triggers update → repeat get_status()
 1. Check API response for a new data field
 2. Create a new platform file (e.g., `switch.py`)
 3. Add a platform to `PLATFORMS` in `__init__.py`
-4. Create entity class extending the appropriate base
+4. Create an entity class extending the appropriate base
 5. Parse data from `coordinator.data`
 
 ### Change Update Interval
@@ -588,7 +1015,7 @@ Accessible via a history panel and `history.get_last_state()`.
     "040": {"value": -8.5, "ts": 1763887586, "stateName": "HEAT_40"}
   },
   "pgm": {
-    "6": {"stav": 1, "nazev": "Ventilátor", "stateName": "PGM_7", ...}
+    "6": {"stav": 1, "nazev": "Osvětlení", "stateName": "PGM_7", ...}
   }
 }
 ```

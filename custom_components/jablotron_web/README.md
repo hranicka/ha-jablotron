@@ -57,107 +57,122 @@ Custom Home Assistant integration for Jablotron JA-100 with automatic session ma
 
 ## How It Works
 
-### Session Management
+## How It Works
 
-The integration uses a sophisticated 4-step authentication process:
+### Authentication (4-Step Process)
 
 ```
-1. Visit Homepage
-   GET https://www.jablonet.net
-   → Get initial PHPSESSID cookie
+1. GET https://www.jablonet.net
+   → Get PHPSESSID cookie
 
-2. Login with Credentials
-   POST https://www.jablonet.net/ajax/login.php
+2. POST /ajax/login.php
    Body: login=email&heslo=password&aStatus=200&loginType=Login
    → Authenticate user
 
-3. Visit Cloud Page
-   GET https://www.jablonet.net/cloud
+3. GET /cloud
    → Get lastMode cookie
 
-4. Initialize JA100 App
-   GET https://www.jablonet.net/app/ja100?service={service_id}
-   → Finalize session for device access
-
-5. Fetch Data (every 300s)
-   POST https://www.jablonet.net/app/ja100/ajax/stav.php
-   Body: activeTab=heat&service_id={service_id}
-   → Returns sensor data for the selected device
-
-6. Control PGM Outputs (when switching)
-   POST https://www.jablonet.net/app/ja100/ajax/ovladani2.php
-   Body: section=PGM_7&status=1&code={pgm_code}&uid=PGM_7_prehled
-   → Switches PGM on (status=1) or off (status=0)
-   → Requires PGM control code configured during setup
-
-7. Session Expiration Detection
-   If response: {"status": 300, ...}
-   → Clear cookies and repeat steps 1-4 (automatic re-login)
+4. GET /app/ja100?service={service_id}
+   → Initialize device session
 ```
 
-### Data Structure
+### Data Polling (Every 5 minutes)
+
+```
+POST /app/ja100/ajax/stav.php
+Body: activeTab=heat
+→ Returns: {teplomery, pgm, sekce, pir, permissions, ...}
+
+If response.status == 300:
+  → Session expired, repeat authentication
+```
+
+### PGM Control (When switching)
+
+```
+POST /app/ja100/ajax/ovladani2.php
+Body: section=PGM_7&status=1&code={pgm_code}&uid=PGM_7_prehled
+→ Returns: {"result": 1, "authorization": 200, "responseCode": 200}
+
+Integration behavior:
+1. Freeze switch state (prevent coordinator overwrites)
+2. Send control command
+3. Process response.result → Update coordinator immediately
+4. Request full data refresh
+5. Unfreeze switch state
+```
+
+### API Data Structure
 
 **Temperature Sensors** (`teplomery`):
 ```json
 "040": {"value": -8.5, "ts": 1763887586, "stateName": "HEAT_40"}
 ```
-- Customizable names during setup
-- Auto-discovered from API
 
 **Alarm Sections** (`sekce`):
 ```json
-"1": {"stav": 0, "nazev": "Section 1", "stateName": "SEC_1", "active": 0, "time": ...}
+"1": {"stav": 0, "nazev": "Přízemí", "stateName": "STATE_2", "time": "..."}
 ```
-- `stav == 1` → Armed (ON)
-- `stav == 0` → Disarmed (OFF)
-- Device class: SAFETY
+- `stav`: 0=disarmed, 1=armed
 
 **PGM Outputs** (`pgm`):
 ```json
-"6": {"stav": 1, "nazev": "Ventilátor", "stateName": "PGM_7", "reaction": "pgorSwitchOnOff", ...}
+"6": {"stav": 1, "nazev": "Osvětlení", "stateName": "PGM_7", "reaction": "pgorSwitchOnOff", "ts": 123}
 ```
-- `stav == 1` → Active (ON)
-- `stav == 0` → Inactive (OFF)
-- Smart device class detection based on name keywords
+- `stav`: 0=off, 1=on
+- `reaction`: Type (`pgorSwitchOnOff`, `pgorPulse`, `pgorCopy`)
 
-**Entity creation:**
-- **Without PGM code**: All PGMs appear as binary sensors (read-only monitoring)
-- **With PGM code**:
-  - Switchable PGMs (`reaction: "pgorSwitchOnOff"` + permission) → Created as **switches only**
-  - Non-switchable PGMs → Remain as binary sensors
-  - Note: Switchable PGMs are NOT created as both sensor and switch - only as switches
-
-**PIR Motion Sensors** (`pir`):
+**PIR Sensors** (`pir`):
 ```json
-"2": {"active": 1, "nazev": "PIR Garage", "stateName": "PIR_2", "type": "motion", ...}
+"2": {"active": 1, "nazev": "PIR Chodba", "stateName": "PPIR_123", "type": "JA-120PC"}
 ```
-- `active == 1` → Motion detected (ON)
-- `active == 0` → No motion (OFF)
-- Device class: MOTION
+- `active`: 0=no motion, 1=motion detected
+
+### Entity Types Created
+
+**Temperature Sensors** (always created):
+- One sensor entity per `teplomery` entry
+- Customizable names during setup
+- Unit: °C
+
+**Binary Sensors** (always created):
+- **Alarm sections**: All `sekce` entries (device_class: SAFETY)
+- **PIR motion**: All `pir` entries (device_class: MOTION)
+- **PGM outputs**: Created when:
+  - No `pgm_code` configured → All PGMs as binary sensors
+  - `pgm_code` configured → Only non-switchable PGMs (e.g., `pgorCopy`)
+
+**Switches** (requires `pgm_code`):
+- **Switchable PGMs**: Created when:
+  - `pgm_code` is configured
+  - PGM reaction is `pgorSwitchOnOff` or `pgorPulse`
+  - User has permission for that PGM
+- **Replaces** binary sensor for that PGM (not created as both)
+- Allows on/off control with immediate state feedback
+
+**Important**: A PGM is either a binary sensor OR a switch, never both.
 
 ## Configuration
 
-### During Setup
+### Setup Flow
 1. **Credentials**: Email and password for jablonet.net
-2. **Service ID** (optional): Select which device to monitor (e.g., a house, a car)
-3. **PGM Control Code** (optional): Numeric code required for switching PGM outputs on/off
-   - **Required for switches**: Without this code, no switch entities will be created
-   - Binary sensors for PGMs will still be available for monitoring
-   - Can be added later via integration options (triggers automatic reload)
-   - Similar to a password for PGM control
-4. **Temperature sensor names**: Customize each sensor (e.g., "Venku", "Kotel")
+2. **Service ID** (optional): Specify which device to monitor (for multi-device accounts)
+3. **PGM Control Code** (optional): PIN for PGM switching
+   - Without code: PGMs are binary sensors only (read-only)
+   - With code: Switchable PGMs become switches (controllable)
+   - Can be added later via Options → triggers reload
+4. **Sensor Names**: Customize each temperature sensor
 
 ### Options (After Setup)
-Access via Settings → Devices & Services → Jablotron Web → Configure:
-- **Update interval**: Default 300 seconds (5 minutes)
-- **Change credentials**: Update email, password, or service_id
-- Changes trigger automatic reload and re-authentication
+Settings → Devices & Services → Jablotron Web → Configure:
+- **Scan interval**: Update frequency (default: 300s)
+- **Credentials**: Change username, password, service_id, or pgm_code
+- Changes trigger automatic reload
 
 ### Reauth Flow
-If credentials expire or change:
-- Integration automatically triggers reauth notification
-- Update credentials through a UI prompt
-- No need to remove and re-add integration
+- Triggered automatically on authentication errors
+- Update credentials via UI prompt
+- No need to remove/re-add integration
 
 ## Files
 
@@ -178,25 +193,20 @@ custom_components/jablotron_web/
 
 ### `jablotron_web.reload`
 
-Reloads all Jablotron Web integrations to discover new sensors and switches.
+Reloads all Jablotron Web integrations to discover new/updated entities.
 
-**Use cases:**
-- After updating the integration to a new version
-- After adding PGM control code
+**When to use:**
+- After adding PGM control code (to create switch entities)
+- After updating to a new version
 - After changing Jablotron system configuration
-- To force refresh of available entities
+- To force discovery of new sensors/PGMs
 
 **Example:**
 ```yaml
 service: jablotron_web.reload
 ```
 
-**When to use:**
-- You updated from a version without PGM switches → Reload to discover switches
-- You added new sensors/PGMs in your Jablotron system → Reload to discover them
-- You changed configuration options → Reload happens automatically, but you can force it
-
-**Note:** Reloading preserves all entity configurations and states.
+**Note:** Entity configurations and states are preserved.
 
 ## Troubleshooting
 

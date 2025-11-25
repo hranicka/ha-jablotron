@@ -65,27 +65,27 @@ rest:
     scan_interval: 300
     sensor:
       # Temperature sensors
-      - name: "Jablotron Teploměr Venku"
+      - name: "Jablotron Teploměr Obývák"
         value_template: "{{ value_json.teplomery['040'].value }}"
         unit_of_measurement: "°C"
         device_class: temperature
-      - name: "Jablotron Teploměr Kotel"
+      - name: "Jablotron Teploměr Ložnice"
         value_template: "{{ value_json.teplomery['046'].value }}"
         unit_of_measurement: "°C"
         device_class: temperature
     binary_sensor:
       # PGM outputs (stav == 1 means ON)
-      - name: "Jablotron Ventilátor"
+      - name: "Jablotron Osvětlení"
         value_template: "{{ value_json.pgm['6'].stav == 1 }}"
         device_class: power
       
       # Alarm sections (stav == 1 means Armed)
-      - name: "Jablotron Section 1"
+      - name: "Jablotron Přízemí"
         value_template: "{{ value_json.sekce['1'].stav == 1 }}"
         device_class: safety
       
       # PIR motion sensors (active == 1 means Motion)
-      - name: "Jablotron PIR Garage"
+      - name: "Jablotron PIR Chodba"
         value_template: "{{ value_json.pir['2'].active == 1 }}"
         device_class: motion
 ```
