@@ -8,7 +8,7 @@ import aiohttp
 
 from homeassistant.core import HomeAssistant
 
-from .const import API_LOGIN_URL, API_STATUS_URL, API_BASE_URL, API_CONTROL_URL
+from .const import API_LOGIN_URL, API_STATUS_URL, API_BASE_URL, API_CONTROL_URL, RETRY_DELAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -226,9 +226,10 @@ class JablotronClient:
             try:
                 await self.login()
             except JablotronTransientError as e:
-                _LOGGER.error(f"Jablotron login failed with transient error: {e}. Will retry after 30 minutes.")
-                self._next_retry_time = time.time() + 1800  # 30 minutes
-                raise Exception("Jablotron API unavailable, will retry after 30 minutes") from e
+                retry_minutes = RETRY_DELAY // 60
+                _LOGGER.error(f"Jablotron login failed with transient error: {e}. Will retry after {retry_minutes} minutes.")
+                self._next_retry_time = time.time() + RETRY_DELAY
+                raise Exception(f"Jablotron API unavailable, will retry after {retry_minutes} minutes") from e
             except JablotronAuthError as e:
                 raise JablotronAuthError("Failed to login to Jablotron Cloud") from e
 
@@ -240,9 +241,10 @@ class JablotronClient:
                 try:
                     await self.login()
                 except JablotronTransientError as e:
-                    _LOGGER.error(f"Jablotron re-login failed with transient error: {e}. Will retry after 30 minutes.")
-                    self._next_retry_time = time.time() + 1800  # 30 minutes
-                    raise Exception("Jablotron API unavailable, will retry after 30 minutes") from e
+                    retry_minutes = RETRY_DELAY // 60
+                    _LOGGER.error(f"Jablotron re-login failed with transient error: {e}. Will retry after {retry_minutes} minutes.")
+                    self._next_retry_time = time.time() + RETRY_DELAY
+                    raise Exception(f"Jablotron API unavailable, will retry after {retry_minutes} minutes") from e
                 except JablotronAuthError as e:
                     raise JablotronAuthError("Failed to re-login to Jablotron Cloud") from e
 
@@ -259,9 +261,10 @@ class JablotronClient:
             # Re-raise auth errors so Home Assistant can trigger reauth flow
             raise
         except Exception as e:
-            _LOGGER.error(f"Jablotron API error: {e}. Will retry after 30 minutes.")
-            self._next_retry_time = time.time() + 1800  # 30 minutes
-            raise Exception("Jablotron API unavailable, will retry after 30 minutes") from e
+            retry_minutes = RETRY_DELAY // 60
+            _LOGGER.error(f"Jablotron API error: {e}. Will retry after {retry_minutes} minutes.")
+            self._next_retry_time = time.time() + RETRY_DELAY
+            raise Exception(f"Jablotron API unavailable, will retry after {retry_minutes} minutes") from e
 
     async def _fetch_status(self) -> Dict[str, Any]:
         """Fetch status from API (stav.php)."""

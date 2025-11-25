@@ -10,6 +10,9 @@ CONF_PGM_CODE = "pgm_code"
 
 DEFAULT_SCAN_INTERVAL = 300
 
+# Retry delay for transient errors (in seconds)
+RETRY_DELAY = 1800  # 30 minutes
+
 # API URLs
 API_BASE_URL = "https://www.jablonet.net"
 API_LOGIN_URL = f"{API_BASE_URL}/ajax/login.php"
