@@ -81,7 +81,7 @@ class JablotronClient:
         # 2. Visit homepage to get PHPSESSID
         if not await self._visit_homepage():
             _LOGGER.error("Failed to visit homepage")
-            return False
+            raise JablotronAuthError("Failed to visit homepage")
 
         # 3. Perform login
         login_data = {
@@ -180,7 +180,8 @@ class JablotronClient:
 
         await self._ensure_session()
 
-        if not self.session.cookie_jar:
+        # Check if we have any cookies, if not, perform initial login
+        if len(self.session.cookie_jar) == 0:
             _LOGGER.info("No cookies found, performing initial login")
             await self.login()
 
