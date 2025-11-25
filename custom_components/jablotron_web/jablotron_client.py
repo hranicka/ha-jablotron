@@ -17,6 +17,10 @@ class JablotronAuthError(Exception):
     """Jablotron authentication error."""
 
 
+class JablotronTransientError(Exception):
+    """Jablotron transient error (server errors, network issues) that should trigger retry."""
+
+
 class JablotronClient:
     """Client for Jablotron API with automatic session management."""
 
@@ -64,10 +68,18 @@ class JablotronClient:
             ) as response:
                 _LOGGER.debug(f"Homepage response status: {response.status}")
                 await response.text()  # Read response body
+
+                # Check for server errors (5xx)
+                if response.status >= 500:
+                    _LOGGER.error(f"Homepage returned server error: {response.status}")
+                    raise JablotronTransientError(f"Homepage returned server error: {response.status}")
+
                 return response.status == 200
+        except JablotronTransientError:
+            raise  # Re-raise transient errors
         except Exception as e:
             _LOGGER.error(f"Error visiting homepage: {e}", exc_info=True)
-            return False
+            raise JablotronTransientError(f"Network error visiting homepage: {e}") from e
 
     async def login(self) -> None:
         """Clear cookies and perform a full login flow."""
@@ -79,9 +91,13 @@ class JablotronClient:
         _LOGGER.debug("Cookie jar cleared for login.")
 
         # 2. Visit homepage to get PHPSESSID
-        if not await self._visit_homepage():
-            _LOGGER.error("Failed to visit homepage")
-            raise JablotronAuthError("Failed to visit homepage")
+        try:
+            homepage_ok = await self._visit_homepage()
+            if not homepage_ok:
+                _LOGGER.error("Failed to visit homepage")
+                raise JablotronAuthError("Failed to visit homepage")
+        except JablotronTransientError:
+            raise  # Re-raise transient errors to trigger retry mechanism
 
         # 3. Perform login
         login_data = {
@@ -100,6 +116,11 @@ class JablotronClient:
                 response_text = await response.text()
                 _LOGGER.debug(f"Login response status: {response.status}")
                 _LOGGER.debug(f"Login response body: {response_text}")
+
+                # Check for server errors (5xx) - these are transient
+                if response.status >= 500:
+                    _LOGGER.error(f"Login failed with server error: {response.status}")
+                    raise JablotronTransientError(f"Login server error: {response.status}")
 
                 if response.status != 200:
                     _LOGGER.error(f"Login failed. HTTP Status: {response.status}, Body: {response_text}")
@@ -122,11 +143,12 @@ class JablotronClient:
 
                 _LOGGER.debug("Login POST successful.")
 
-        except JablotronAuthError:
-            raise  # Re-raise JablotronAuthError to be caught by the caller
-        except Exception as e:
-            _LOGGER.error(f"Login request error: {e}", exc_info=True)
-            raise JablotronAuthError("Login request failed") from e
+        except (JablotronAuthError, JablotronTransientError):
+            raise  # Re-raise to be caught by the caller
+        except (aiohttp.ClientError, TimeoutError) as e:
+            # Network errors, connection issues, timeouts - these are transient
+            _LOGGER.error(f"Login request network error: {e}", exc_info=True)
+            raise JablotronTransientError(f"Login network error: {e}") from e
 
         # 4. Visit /cloud page to get the lastMode cookie
         _LOGGER.debug("Fetching /cloud page to set lastMode cookie.")
@@ -140,12 +162,21 @@ class JablotronClient:
             async with self.session.get(cloud_url, headers=cloud_headers) as cloud_response:
                 await cloud_response.text()
                 _LOGGER.debug(f"/cloud response status: {cloud_response.status}")
+
+                # Check for server errors (5xx) - these are transient
+                if cloud_response.status >= 500:
+                    _LOGGER.error(f"/cloud page returned server error: {cloud_response.status}")
+                    raise JablotronTransientError(f"/cloud page server error: {cloud_response.status}")
+
                 if cloud_response.status != 200:
                     _LOGGER.error(f"/cloud page fetch failed with status: {cloud_response.status}")
                     raise JablotronAuthError(f"/cloud page fetch failed with status: {cloud_response.status}")
-        except Exception as e:
+        except (JablotronAuthError, JablotronTransientError):
+            raise  # Re-raise to be caught by the caller
+        except (aiohttp.ClientError, TimeoutError) as e:
+            # Network errors, connection issues, timeouts - these are transient
             _LOGGER.error(f"Error fetching /cloud page: {e}", exc_info=True)
-            raise JablotronAuthError("Error fetching /cloud page") from e
+            raise JablotronTransientError(f"/cloud page network error: {e}") from e
 
         # 5. Visit the JA100 app page (required before fetching sensors)
         _LOGGER.debug("Visiting JA100 app page...")
@@ -157,14 +188,23 @@ class JablotronClient:
             async with self.session.get(ja100_url, headers=cloud_headers) as ja100_response:
                 await ja100_response.text()
                 _LOGGER.debug(f"JA100 app page status: {ja100_response.status}")
+
+                # Check for server errors (5xx) - these are transient
+                if ja100_response.status >= 500:
+                    _LOGGER.error(f"JA100 app page returned server error: {ja100_response.status}")
+                    raise JablotronTransientError(f"JA100 app page server error: {ja100_response.status}")
+
                 if ja100_response.status == 200:
                     _LOGGER.info("Successfully logged in and obtained all cookies.")
                 else:
                     _LOGGER.error(f"JA100 app page returned status {ja100_response.status}")
                     raise JablotronAuthError(f"JA100 app page returned status {ja100_response.status}")
-        except Exception as e:
+        except (JablotronAuthError, JablotronTransientError):
+            raise  # Re-raise to be caught by the caller
+        except (aiohttp.ClientError, TimeoutError) as e:
+            # Network errors, connection issues, timeouts - these are transient
             _LOGGER.error(f"Error fetching JA100 app page: {e}", exc_info=True)
-            raise JablotronAuthError("Error fetching JA100 app page") from e
+            raise JablotronTransientError(f"JA100 app page network error: {e}") from e
 
     async def get_status(self) -> Dict[str, Any]:
         """Get status from Jablotron API with automatic re-login on session expiry."""
@@ -183,7 +223,14 @@ class JablotronClient:
         # Check if we have any cookies, if not, perform initial login
         if len(self.session.cookie_jar) == 0:
             _LOGGER.info("No cookies found, performing initial login")
-            await self.login()
+            try:
+                await self.login()
+            except JablotronTransientError as e:
+                _LOGGER.error(f"Jablotron login failed with transient error: {e}. Will retry after 30 minutes.")
+                self._next_retry_time = time.time() + 1800  # 30 minutes
+                raise Exception("Jablotron API unavailable, will retry after 30 minutes") from e
+            except JablotronAuthError as e:
+                raise JablotronAuthError("Failed to login to Jablotron Cloud") from e
 
         try:
             data = await fetch_func()
@@ -192,6 +239,10 @@ class JablotronClient:
                 _LOGGER.info("Session expired (status 300), re-logging in with cleared cookies")
                 try:
                     await self.login()
+                except JablotronTransientError as e:
+                    _LOGGER.error(f"Jablotron re-login failed with transient error: {e}. Will retry after 30 minutes.")
+                    self._next_retry_time = time.time() + 1800  # 30 minutes
+                    raise Exception("Jablotron API unavailable, will retry after 30 minutes") from e
                 except JablotronAuthError as e:
                     raise JablotronAuthError("Failed to re-login to Jablotron Cloud") from e
 
