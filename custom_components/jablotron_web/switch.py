@@ -1,5 +1,6 @@
 """Switch platform for Jablotron Web."""
 import logging
+import time
 from typing import Any, Dict
 
 from homeassistant.components.switch import SwitchEntity
@@ -115,63 +116,80 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
                 return None
         return None
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the switch on."""
-        # Store the current state in case we need to revert
+    async def _async_control_pgm(self, turn_on: bool) -> None:
+        """Control the PGM switch (shared logic for on/off).
+
+        Args:
+            turn_on: True to turn on, False to turn off
+        """
         previous_state = self.is_on
+        action = "on" if turn_on else "off"
+        command = 1 if turn_on else 0
 
         try:
-            # Set an optimistic state immediately
-            self._optimistic_state = True
+            # Set optimistic state immediately to freeze the switch during the operation
+            # This prevents coordinator updates from changing the state while we're switching
+            self._optimistic_state = turn_on
             self.async_write_ha_state()
 
-            _LOGGER.debug(f"Turning on PGM {self._pgm_id}")
-            result = await self._client.control_pgm(self._pgm_id, 1)
-            _LOGGER.info(f"PGM {self._pgm_id} turned on: {result}")
-            
-            # Wait for the coordinator to get fresh data
+            _LOGGER.debug(f"Turning {action} PGM {self._pgm_id}, state frozen during operation")
+            response = await self._client.control_pgm(self._pgm_id, command)
+            _LOGGER.info(f"PGM {self._pgm_id} control response: {response}")
+
+            # Process the response and update coordinator data immediately
+            # Response format: {"ts": 123, "id": "PGM_7", "authorization": 200, "result": 0/1, "responseCode": 200}
+            if response and "result" in response and self.coordinator.data:
+                new_state = response.get("result")
+                if isinstance(new_state, int) and new_state in (0, 1):
+                    # Update the coordinator's data with the fresh state from the response
+                    _LOGGER.debug(f"Updating coordinator data with response state: {new_state} for PGM {self._pgm_id}")
+                    if "pgm" not in self.coordinator.data:
+                        self.coordinator.data["pgm"] = {}
+                    if self._pgm_id not in self.coordinator.data["pgm"]:
+                        self.coordinator.data["pgm"][self._pgm_id] = {}
+
+                    # Update the state in coordinator data
+                    self.coordinator.data["pgm"][self._pgm_id]["stav"] = new_state
+                    self.coordinator.data["pgm"][self._pgm_id]["ts"] = response.get("ts", int(time.time()))
+
+                    # Clear optimistic state BEFORE triggering update so this switch can process it
+                    self._optimistic_state = None
+
+                    # Trigger coordinator update to notify all listeners (including this switch)
+                    self.coordinator.async_set_updated_data(self.coordinator.data)
+                    _LOGGER.debug(f"Coordinator data updated, state unfrozen for PGM {self._pgm_id}")
+                else:
+                    # Invalid response, clear optimistic state
+                    _LOGGER.warning(f"Invalid result in response: {new_state}")
+                    self._optimistic_state = None
+            else:
+                # No valid response, clear optimistic state
+                _LOGGER.warning(f"No valid response data for PGM {self._pgm_id}")
+                self._optimistic_state = None
+
+            # Request a full refresh to get all updated data (for other sensors, etc.)
+            # This also ensures we have the latest state from the server
             await self.coordinator.async_request_refresh()
 
-            # Clear optimistic state and update with real data
+            # State should already be cleared above, but ensure it's None
             self._optimistic_state = None
             self.async_write_ha_state()
         except Exception as err:
-            _LOGGER.error(f"Failed to turn on PGM {self._pgm_id}: {err}")
+            _LOGGER.error(f"Failed to turn {action} PGM {self._pgm_id}: {err}")
             # Revert to previous state on failure
             self._optimistic_state = previous_state
             self.async_write_ha_state()
             # Clear optimistic state after a moment
             self._optimistic_state = None
             raise
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the switch on."""
+        await self._async_control_pgm(turn_on=True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        # Store the current state in case we need to revert
-        previous_state = self.is_on
-
-        try:
-            # Set an optimistic state immediately
-            self._optimistic_state = False
-            self.async_write_ha_state()
-
-            _LOGGER.debug(f"Turning off PGM {self._pgm_id}")
-            result = await self._client.control_pgm(self._pgm_id, 0)
-            _LOGGER.info(f"PGM {self._pgm_id} turned off: {result}")
-            
-            # Wait for the coordinator to get fresh data
-            await self.coordinator.async_request_refresh()
-
-            # Clear optimistic state and update with real data
-            self._optimistic_state = None
-            self.async_write_ha_state()
-        except Exception as err:
-            _LOGGER.error(f"Failed to turn off PGM {self._pgm_id}: {err}")
-            # Revert to previous state on failure
-            self._optimistic_state = previous_state
-            self.async_write_ha_state()
-            # Clear optimistic state after a moment
-            self._optimistic_state = None
-            raise
+        await self._async_control_pgm(turn_on=False)
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
