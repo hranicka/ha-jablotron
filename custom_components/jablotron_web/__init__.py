@@ -1,5 +1,6 @@
 """Jablotron Web integration for Home Assistant."""
 import logging
+import time
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -29,6 +30,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def async_update_data():
         """Fetch data from API."""
+        # Check if we're in a retry delay period
+        next_retry = client.get_next_retry_time()
+        if next_retry and time.time() < next_retry:
+            # Skip the call entirely, raise UpdateFailed with a clear message
+            remaining = int(next_retry - time.time())
+            minutes = remaining // 60
+            seconds = remaining % 60
+            _LOGGER.debug(
+                f"Waiting for retry delay to expire: {minutes}m {seconds}s remaining"
+            )
+            raise UpdateFailed(
+                f"Session error - retrying in {minutes} minutes {seconds} seconds"
+            )
+
         try:
             return await client.get_status()
         except JablotronAuthError as err:

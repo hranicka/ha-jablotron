@@ -61,9 +61,12 @@ hass.data[DOMAIN][entry_id] → {"coordinator": coordinator, "client": client}
 ```
 
 **Error Handling**:
-- `JablotronAuthError` → Raises `ConfigEntryAuthFailed` → Triggers reauth flow
-- Other exceptions → Raises `UpdateFailed` → Entities unavailable, retries on next interval
-- Session management handled in `jablotron_client.py`
+- **Retry Delay Awareness**: Coordinator checks `client.get_next_retry_time()` before calling API
+  - If delay active → Raises `UpdateFailed` with time remaining message
+  - Avoids unnecessary client calls during retry period
+- **Session Errors**: `JablotronAuthError` → Raises `ConfigEntryAuthFailed` → Triggers reauth flow
+- **Other Errors**: Generic exceptions → Raises `UpdateFailed` → Entities unavailable, retries on next interval
+- **Session Management**: Automatic reset and retry delay handled in `jablotron_client.py`
 
 ---
 
@@ -117,42 +120,107 @@ __init__(username, password, service_id, hass, pgm_code)
     → Initializes _next_retry_time = None (for retry backoff)
 ```
 
-**Key Methods**:
+**Architecture**: Clean design with thin HTTP wrapper and uniform error handling.
+
+**HTTP Layer (Thin Wrapper)**:
+
+#### `async _http_request(method, url, headers, data)`
+Low-level HTTP wrapper for all requests.
+- **Returns**: `(status_code, response_text)` tuple
+- **Accepts**: Only HTTP 200 as success
+- **Raises**: `JablotronSessionError` on any unexpected result (non-200, network errors)
+
+#### `async _http_json(method, url, headers, data, expected_status=200)`
+HTTP wrapper for JSON responses.
+- **Returns**: Parsed JSON dict
+- **Validates**: JSON structure and `status` field in response
+- **Raises**: `JablotronSessionError` on invalid JSON or `status != expected_status`
+
+**Session Management**:
 
 #### `async login()`
 4-step authentication process:
-1. GET `https://www.jablonet.net` → Initial PHPSESSID cookie
-2. POST `/ajax/login.php` → Authenticate credentials
-3. GET `/cloud` → Get lastMode cookie
-4. GET `/app/ja100?service={service_id}` → Initialize JA100 session
+1. `_visit_homepage()` → GET `https://www.jablonet.net` → Initial PHPSESSID cookie
+2. `_login_post()` → POST `/ajax/login.php` → Authenticate credentials
+3. `_get_cloud_page()` → GET `/cloud` → Get lastMode cookie
+4. `_get_ja100_app()` → GET `/app/ja100?service={service_id}` → Initialize JA100 session
 
-**Raises**: `JablotronAuthError` on failure
+**Raises**: `JablotronAuthError` on any failure (wraps `JablotronSessionError`)
+
+#### `async _reset_session()`
+Complete session reset (called on every error):
+1. Clears all cookies from cookie jar
+2. Closes aiohttp session
+3. Sets session to `None`
+
+**Public API Methods**:
+
+#### `def get_next_retry_time()`
+Returns timestamp when next retry is allowed.
+- **Returns**: `Optional[float]` - Unix timestamp (seconds since epoch) or `None` if no delay active
+- **Usage**: Coordinator checks this before calling API methods to avoid unnecessary calls during retry delay
 
 #### `async get_status()`
 Fetches the current state of all system components.
-- Calls `_api_request_handler(_fetch_status)`
+- Calls `_with_session_handling(_fetch_status)`
 - Returns dict with `teplomery`, `pgm`, `sekce`, `pir`, `permissions`, etc.
-- **Raises**: `JablotronAuthError` for reauth, `Exception` for update failures
+- **Raises**: `JablotronAuthError` on session errors
 
 #### `async control_pgm(pgm_id, status)`
 Controls a PGM output (turn on/off).
 - **Args**: `pgm_id` (e.g., "6"), `status` (0=off, 1=on)
 - **Returns**: Response dict with `{"result": 0/1, "authorization": 200, ...}`
-- Uses `_api_request_handler(_control_pgm)` for session management
+- Calls `_with_session_handling(_control_pgm_internal)`
+- **Raises**: `JablotronAuthError` on session errors
 
-#### `async _api_request_handler(fetch_func)`
-Generic wrapper for all API requests:
-1. Checks retry backoff period (30min after errors)
-2. Ensures session exists, logs in if needed
-3. Executes `fetch_func()`
-4. If `status == 300` → Session expired, re-login and retry
-5. On success: Clears retry timer
-6. On error: Sets 30-minute backoff
+**Error Handling**:
 
-**Session Management**:
-- Automatic re-login on session expiration (`status: 300`)
-- Cookie jar maintains PHPSESSID and lastMode
-- `async_close()` cleans up aiohttp session
+#### `async _with_session_handling(api_func)`
+Wrapper for all API calls with automatic error recovery:
+1. **Ensure session**: If no session/cookies → reset + login
+2. **Execute API call**: Call `api_func()` (e.g., `_fetch_status()`)
+3. **On success**: Clear retry timer, return data
+4. **On `JablotronSessionError`**: 
+   - Call `_reset_session()` (complete cleanup)
+   - **Immediately attempt re-login** (no delay)
+   - If re-login succeeds → retry API call, return data
+   - If re-login fails → set 30-minute retry delay, raise `JablotronAuthError`
+
+**Note**: Retry delay is only set when re-login fails, not when the initial API call fails. This allows fast recovery from common session expiry scenarios.
+
+**Error Flow**:
+```
+Coordinator checks get_next_retry_time()
+  → If delay active: Raise UpdateFailed ("retrying in X minutes")
+  → If no delay: Call client.get_status()
+    ↓
+API Call → JablotronSessionError (non-200 HTTP, invalid JSON, status != 200)
+  → _with_session_handling catches it
+  → _reset_session() - complete cleanup
+  → Immediately attempt re-login (no delay!)
+    ↓
+    ├── Re-login SUCCESS
+    │     → Retry API call
+    │     → Return data (recovery time: ~2-5 seconds)
+    │
+    └── Re-login FAILS
+          → Set _next_retry_time = now + 30 minutes
+          → Raise JablotronAuthError
+          → Coordinator raises UpdateFailed
+          → Entities show "Unavailable"
+          → Next coordinator attempt (5 min): Delay check → UpdateFailed
+          → After 30 minutes: Delay expired → Fresh login → Resume
+```
+
+**Session Expiry Detection**:
+- API returns `{"status": 300, ...}` when session expires
+- `_http_json()` detects this and raises `JablotronSessionError`
+- Triggers complete reset + retry flow above
+
+**Cookie Management**:
+- Cookie jar maintains `PHPSESSID` and `lastMode`
+- Automatically sent with each request
+- Cleared on every error via `_reset_session()`
 
 ---
 
