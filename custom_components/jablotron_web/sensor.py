@@ -29,7 +29,7 @@ async def async_setup_entry(
     # Get custom sensor names from config
     sensor_names = entry.data.get(CONF_SENSOR_NAMES, {})
 
-    sensors = []
+    sensors = [JablotronNextUpdateSensor(coordinator, entry.entry_id)]
 
     # Get initial data to determine available sensors
     if coordinator.data and "teplomery" in coordinator.data:
@@ -100,3 +100,22 @@ class JablotronTemperatureSensor(CoordinatorEntity, SensorEntity):
             return attrs
         return {}
 
+
+class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
+    """Representation of a Jablotron next update sensor."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator, entry_id: str):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._attr_name = "Jablotron Next Update"
+        self._attr_unique_id = f"{entry_id}_next_update"
+        self._attr_icon = "mdi:timer-outline"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the state of the sensor."""
+        if self.coordinator.last_update_success and self.coordinator.last_update_success_time:
+            return (self.coordinator.last_update_success_time + self.coordinator.update_interval).isoformat()
+        return None

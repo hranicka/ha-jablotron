@@ -14,7 +14,9 @@ Full-featured Home Assistant integration for Jablotron JA-100 alarm systems.
 - ✅ PGM switching (requires control code)
 - ✅ Multi-device support via `service_id`
 - ✅ Intelligent retry backoff
-- ✅ UI configuration with options flow
+- ✅ Countdown timer to next update
+- ✅ Manual update trigger button
+- ✅ UI configuration with option flow
 
 ## Installation
 

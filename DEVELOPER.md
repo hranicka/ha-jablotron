@@ -13,7 +13,7 @@ config_flow.py (User Configuration)
     ↓
 jablotron_client.py (API Communication)
     ↓
-sensor.py + binary_sensor.py (Entities)
+sensor.py + binary_sensor.py + switch.py + button.py (Entities)
 ```
 
 ## File Structure & Responsibilities
@@ -22,7 +22,7 @@ sensor.py + binary_sensor.py (Entities)
 
 **Purpose**: Entry point for the integration, manages setup and data updates.
 
-**Platforms**: `SENSOR`, `BINARY_SENSOR`, `SWITCH`
+**Platforms**: `SENSOR`, `BINARY_SENSOR`, `SWITCH`, `BUTTON`
 
 **Key Functions**:
 
