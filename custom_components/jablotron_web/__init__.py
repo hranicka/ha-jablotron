@@ -79,11 +79,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     _LOGGER.info(f"Initialized hass.data for entry {entry.entry_id}")
 
-    # Set up platforms so entities are created
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Start the first refresh now that entities exist to receive the update
+    # Start the first refresh. THIS MUST be done before setting up platforms
+    # that rely on the data to be present.
     await coordinator.async_config_entry_first_refresh()
+
+    # Set up platforms now that coordinator.data is populated
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register services on the first entry
     if len(hass.data[DOMAIN]) == 1:
