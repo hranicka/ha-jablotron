@@ -3,3 +3,8 @@ reload:
   description: Reload all Jablotron Web integrations to discover new sensors and switches. Use this after updating the component or changing configuration.
   fields: {}
 
+update:
+  name: Force Update
+  description: Trigger an immediate update of Jablotron data from the API. This will update all sensors and switches with the latest data from the cloud.
+  fields: {}
+
