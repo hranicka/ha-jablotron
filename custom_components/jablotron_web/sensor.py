@@ -1,5 +1,6 @@
 import logging
 from typing import Any, Dict
+from datetime import datetime
 from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import (
@@ -112,18 +113,35 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = "Jablotron Next Update"
         self._attr_unique_id = f"{entry_id}_next_update"
         self._attr_icon = "mdi:timer-outline"
-
+        self._entry_id = entry_id
 
     @property
     def available(self) -> bool:
         """Return if the entity is available."""
-        return True
+        # Only available if we have actual last_update_time data
+        return (
+            DOMAIN in self.hass.data
+            and self._entry_id in self.hass.data[DOMAIN]
+            and "last_update_time" in self.hass.data[DOMAIN][self._entry_id]
+        )
 
     @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
-        # On startup, last_update_success_time is None, so we estimate.
-        last_update = self.coordinator.last_update_success_time or dt_util.now()
-        next_update = last_update + self.coordinator.update_interval
-        return next_update.isoformat()
+        try:
+            # Get the last update time from hass.data
+            if not self.available:
+                return None
+
+            last_update_timestamp = self.hass.data[DOMAIN][self._entry_id]["last_update_time"]
+            last_update_dt = datetime.fromtimestamp(last_update_timestamp, tz=dt_util.DEFAULT_TIME_ZONE)
+            next_update = last_update_dt + self.coordinator.update_interval
+            _LOGGER.debug(
+                f"Next update sensor: last_update={last_update_dt}, "
+                f"interval={self.coordinator.update_interval}, next={next_update}"
+            )
+            return next_update.isoformat()
+        except Exception as e:
+            _LOGGER.error(f"Error calculating next update time: {e}")
+            return None
 

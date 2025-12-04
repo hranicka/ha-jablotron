@@ -49,7 +49,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         try:
-            return await client.get_status()
+            data = await client.get_status()
+            # Track the last successful update time
+            hass.data[DOMAIN][entry.entry_id]["last_update_time"] = time.time()
+            return data
         except JablotronSessionError as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
         except JablotronAuthError as err:
@@ -71,6 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "client": client,
+        "last_update_time": time.time(),  # Initialize with the current time
     }
 
     # Register services on the first entry
