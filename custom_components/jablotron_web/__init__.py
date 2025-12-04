@@ -70,22 +70,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=timedelta(seconds=entry.options.get("scan_interval", 300)),
     )
 
-    # Initialize hass.data BEFORE the first refresh so async_update_data can access it
+    # Initialize hass.data so it's available for platforms
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "client": client,
-        "last_update_time": time.time(),  # Initialize with the current time
+        "last_update_time": None,  # Initialize as None
     }
-    _LOGGER.info(f"Initialized hass.data for entry {entry.entry_id} with last_update_time")
+    _LOGGER.info(f"Initialized hass.data for entry {entry.entry_id}")
 
+    # Set up platforms so entities are created
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Start the first refresh now that entities exist to receive the update
     await coordinator.async_config_entry_first_refresh()
 
     # Register services on the first entry
     if len(hass.data[DOMAIN]) == 1:
         await services.async_setup_services(hass)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 

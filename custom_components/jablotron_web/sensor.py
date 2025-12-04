@@ -118,45 +118,13 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
 
     def _get_last_update_timestamp(self) -> float | None:
         """Get the last update timestamp from hass.data."""
-        try:
-            _LOGGER.debug(
-                f"Checking last_update_time: DOMAIN={DOMAIN in self._hass.data}, "
-                f"entry_id={self._entry_id in self._hass.data.get(DOMAIN, {})}, "
-                f"hass.data keys={list(self._hass.data.keys())}"
-            )
-            if DOMAIN in self._hass.data:
-                _LOGGER.debug(f"DOMAIN data keys: {list(self._hass.data[DOMAIN].keys())}")
-                if self._entry_id in self._hass.data[DOMAIN]:
-                    _LOGGER.debug(f"Entry data keys: {list(self._hass.data[DOMAIN][self._entry_id].keys())}")
-
-            if (
-                DOMAIN in self._hass.data
-                and self._entry_id in self._hass.data[DOMAIN]
-                and "last_update_time" in self._hass.data[DOMAIN][self._entry_id]
-            ):
-                timestamp = self._hass.data[DOMAIN][self._entry_id]["last_update_time"]
-                _LOGGER.debug(f"Found last_update_time: {timestamp}")
-                return timestamp
-
-            _LOGGER.debug(f"last_update_time not found for entry_id: {self._entry_id}")
-            return None
-        except Exception as e:
-            _LOGGER.error(f"Error getting last_update_timestamp: {e}", exc_info=True)
-            return None
-
-    def _calculate_update_times(self) -> tuple[datetime, datetime] | None:
-        """Calculate the last and next update times.
-
-        Returns:
-            Tuple of (last_update_dt, next_update_dt) or None if data is unavailable.
-        """
-        timestamp = self._get_last_update_timestamp()
-        if timestamp is None:
-            return None
-
-        last_update_dt = datetime.fromtimestamp(timestamp, tz=dt_util.DEFAULT_TIME_ZONE)
-        next_update_dt = last_update_dt + self.coordinator.update_interval
-        return last_update_dt, next_update_dt
+        if (
+            DOMAIN in self._hass.data
+            and self._entry_id in self._hass.data[DOMAIN]
+            and "last_update_time" in self._hass.data[DOMAIN][self._entry_id]
+        ):
+            return self._hass.data[DOMAIN][self._entry_id]["last_update_time"]
+        return None
 
     @property
     def available(self) -> bool:
@@ -164,49 +132,39 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
         return self._get_last_update_timestamp() is not None
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> datetime | None:
         """Return the state of the sensor (next update time)."""
-        try:
-            update_times = self._calculate_update_times()
-            if update_times is None:
-                return None
-
-            last_update_dt, next_update_dt = update_times
-            _LOGGER.debug(
-                f"Next update sensor: last_update={last_update_dt}, "
-                f"interval={self.coordinator.update_interval}, next={next_update_dt}"
-            )
-            return next_update_dt.isoformat()
-        except Exception as e:
-            _LOGGER.error(f"Error calculating next update time: {e}")
+        timestamp = self._get_last_update_timestamp()
+        if timestamp is None:
             return None
+
+        last_update_dt = datetime.fromtimestamp(timestamp, tz=dt_util.DEFAULT_TIME_ZONE)
+        return last_update_dt + self.coordinator.update_interval
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional state attributes."""
-        try:
-            update_times = self._calculate_update_times()
-            if update_times is None:
-                return {}
-
-            last_update_dt, next_update_dt = update_times
-
-            # Calculate time until the next update
-            now = dt_util.now()
-            time_until_next = next_update_dt - now
-            seconds_until_next = int(time_until_next.total_seconds())
-
-            return {
-                "last_update": last_update_dt.isoformat(),
-                "next_update": next_update_dt.isoformat(),
-                "update_interval_seconds": int(self.coordinator.update_interval.total_seconds()),
-                "update_interval_minutes": int(self.coordinator.update_interval.total_seconds() / 60),
-                "seconds_until_next_update": max(0, seconds_until_next),
-                "minutes_until_next_update": max(0, seconds_until_next // 60),
-                "last_update_success": self.coordinator.last_update_success,
-            }
-        except Exception as e:
-            _LOGGER.error(f"Error calculating attributes: {e}")
+        timestamp = self._get_last_update_timestamp()
+        if timestamp is None:
             return {}
+
+        last_update_dt = datetime.fromtimestamp(timestamp, tz=dt_util.DEFAULT_TIME_ZONE)
+        next_update_dt = last_update_dt + self.coordinator.update_interval
+
+        # Calculate time until the next update
+        now = dt_util.now()
+        time_until_next = next_update_dt - now
+        seconds_until_next = int(time_until_next.total_seconds())
+        interval_seconds = int(self.coordinator.update_interval.total_seconds())
+
+        return {
+            "last_update": last_update_dt.isoformat(),
+            "next_update": next_update_dt.isoformat(),
+            "update_interval_seconds": interval_seconds,
+            "update_interval_minutes": interval_seconds // 60,
+            "seconds_until_next_update": max(0, seconds_until_next),
+            "minutes_until_next_update": max(0, seconds_until_next // 60),
+            "last_update_success": self.coordinator.last_update_success,
+        }
 
 
