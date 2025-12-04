@@ -58,6 +58,12 @@ class JablotronClient:
         """
         return self._next_retry_time
 
+    async def reset_session_and_clear_retry(self):
+        """Reset the session and clear the retry timer. Called when retry delay expires."""
+        _LOGGER.info("Clearing retry timer and resetting session for fresh retry")
+        self._next_retry_time = None
+        await self._reset_session()
+
     # ===== HTTP Client Wrapper =====
 
     async def _http_request(
@@ -298,7 +304,6 @@ class JablotronClient:
                 await self._reset_session()
                 try:
                     await self.login()
-                    self._next_retry_time = None
                 except JablotronSessionError as e:
                     # Initial login failed - set retry delay
                     self._next_retry_time = time.time() + RETRY_DELAY
@@ -333,7 +338,6 @@ class JablotronClient:
             try:
                 await self.login()
                 _LOGGER.info("Re-login successful, retrying API call")
-                self._next_retry_time = None
 
                 # Retry the API call
                 result = await api_func()

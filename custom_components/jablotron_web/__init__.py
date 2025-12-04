@@ -36,17 +36,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Fetch data from API."""
         # Check if we're in a retry delay period
         next_retry = client.get_next_retry_time()
-        if next_retry and time.time() < next_retry:
-            # Skip the call entirely, raise UpdateFailed with a clear message
-            remaining = int(next_retry - time.time())
-            minutes = remaining // 60
-            seconds = remaining % 60
-            _LOGGER.debug(
-                f"Waiting for retry delay to expire: {minutes}m {seconds}s remaining"
-            )
-            raise UpdateFailed(
-                f"Session error - retrying in {minutes} minutes {seconds} seconds"
-            )
+        if next_retry is not None:
+            current_time = time.time()
+            if current_time < next_retry:
+                # Still in retry delay - skip the call
+                remaining = int(next_retry - current_time)
+                minutes = remaining // 60
+                seconds = remaining % 60
+                _LOGGER.debug(
+                    f"Waiting for retry delay to expire: {minutes}m {seconds}s remaining"
+                )
+                raise UpdateFailed(
+                    f"Session error - retrying in {minutes} minutes {seconds} seconds"
+                )
+            else:
+                # Retry delay has expired - reset session before retry
+                _LOGGER.info("Retry delay expired, resetting session before retry")
+                await client.reset_session_and_clear_retry()
 
         try:
             data = await client.get_status()
