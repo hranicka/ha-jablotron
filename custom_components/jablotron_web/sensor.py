@@ -30,7 +30,7 @@ async def async_setup_entry(
     # Get custom sensor names from config
     sensor_names = entry.data.get(CONF_SENSOR_NAMES, {})
 
-    sensors = [JablotronNextUpdateSensor(coordinator, entry.entry_id)]
+    sensors = [JablotronNextUpdateSensor(coordinator, entry.entry_id, hass)]
 
     # Get initial data to determine available sensors
     if coordinator.data and "teplomery" in coordinator.data:
@@ -107,23 +107,42 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
-    def __init__(self, coordinator, entry_id: str):
+    def __init__(self, coordinator, entry_id: str, hass: HomeAssistant):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_name = "Jablotron Next Update"
         self._attr_unique_id = f"{entry_id}_next_update"
         self._attr_icon = "mdi:update"
         self._entry_id = entry_id
+        self._hass = hass
 
     def _get_last_update_timestamp(self) -> float | None:
         """Get the last update timestamp from hass.data."""
-        if (
-            DOMAIN in self.hass.data
-            and self._entry_id in self.hass.data[DOMAIN]
-            and "last_update_time" in self.hass.data[DOMAIN][self._entry_id]
-        ):
-            return self.hass.data[DOMAIN][self._entry_id]["last_update_time"]
-        return None
+        try:
+            _LOGGER.debug(
+                f"Checking last_update_time: DOMAIN={DOMAIN in self._hass.data}, "
+                f"entry_id={self._entry_id in self._hass.data.get(DOMAIN, {})}, "
+                f"hass.data keys={list(self._hass.data.keys())}"
+            )
+            if DOMAIN in self._hass.data:
+                _LOGGER.debug(f"DOMAIN data keys: {list(self._hass.data[DOMAIN].keys())}")
+                if self._entry_id in self._hass.data[DOMAIN]:
+                    _LOGGER.debug(f"Entry data keys: {list(self._hass.data[DOMAIN][self._entry_id].keys())}")
+
+            if (
+                DOMAIN in self._hass.data
+                and self._entry_id in self._hass.data[DOMAIN]
+                and "last_update_time" in self._hass.data[DOMAIN][self._entry_id]
+            ):
+                timestamp = self._hass.data[DOMAIN][self._entry_id]["last_update_time"]
+                _LOGGER.debug(f"Found last_update_time: {timestamp}")
+                return timestamp
+
+            _LOGGER.debug(f"last_update_time not found for entry_id: {self._entry_id}")
+            return None
+        except Exception as e:
+            _LOGGER.error(f"Error getting last_update_timestamp: {e}", exc_info=True)
+            return None
 
     def _calculate_update_times(self) -> tuple[datetime, datetime] | None:
         """Calculate the last and next update times.

@@ -51,7 +51,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             data = await client.get_status()
             # Track the last successful update time
-            hass.data[DOMAIN][entry.entry_id]["last_update_time"] = time.time()
+            current_time = time.time()
+            hass.data[DOMAIN][entry.entry_id]["last_update_time"] = current_time
+            _LOGGER.debug(f"Updated last_update_time to {current_time} for entry {entry.entry_id}")
             return data
         except JablotronSessionError as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
@@ -75,6 +77,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
         "last_update_time": time.time(),  # Initialize with the current time
     }
+    _LOGGER.info(f"Initialized hass.data for entry {entry.entry_id} with last_update_time")
 
     await coordinator.async_config_entry_first_refresh()
 
