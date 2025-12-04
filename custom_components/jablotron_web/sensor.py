@@ -1,6 +1,6 @@
-"""Sensor platform for Jablotron Web."""
 import logging
 from typing import Any, Dict
+from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -113,9 +113,17 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{entry_id}_next_update"
         self._attr_icon = "mdi:timer-outline"
 
+
+    @property
+    def available(self) -> bool:
+        """Return if the entity is available."""
+        return True
+
     @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
-        if self.coordinator.last_update_success and self.coordinator.last_update_success_time:
-            return (self.coordinator.last_update_success_time + self.coordinator.update_interval).isoformat()
-        return None
+        # On startup, last_update_success_time is None, so we estimate.
+        last_update = self.coordinator.last_update_success_time or dt_util.now()
+        next_update = last_update + self.coordinator.update_interval
+        return next_update.isoformat()
+
