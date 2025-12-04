@@ -14,12 +14,20 @@ from .const import API_BASE_URL, API_CONTROL_URL, API_LOGIN_URL, API_STATUS_URL,
 _LOGGER = logging.getLogger(__name__)
 
 
-class JablotronAuthError(Exception):
+class JablotronError(Exception):
+    """Base exception for this integration."""
+
+
+class JablotronAuthError(JablotronError):
     """Exception for authentication errors."""
 
 
-class JablotronSessionError(Exception):
-    """Exception when a session is invalid or needs reset."""
+class JablotronNetworkError(JablotronError):
+    """Exception for network errors."""
+
+
+class JablotronSessionError(JablotronError):
+    """Exception for session errors that can be resolved by re-login."""
 
 
 class JablotronClient:
@@ -63,7 +71,9 @@ class JablotronClient:
         Thin HTTP wrapper for all requests.
 
         Returns: (status_code, response_text)
-        Raises: JablotronSessionError on any unexpected result
+        Raises:
+            JablotronNetworkError: On network errors or 5xx server errors.
+            JablotronSessionError: On 4xx client errors.
         """
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar())
@@ -78,19 +88,21 @@ class JablotronClient:
                     text = await response.text()
                     status = response.status
 
-            # Only HTTP 200 is acceptable
             if status != 200:
                 _LOGGER.error(f"HTTP {method} {url} returned status {status}")
-                raise JablotronSessionError(f"HTTP {status}")
+                if 400 <= status < 500:
+                    raise JablotronSessionError(f"Request failed: HTTP {status}")
+                if 500 <= status < 600:
+                    raise JablotronNetworkError(f"Server error: HTTP {status}")
 
             return status, text
 
         except aiohttp.ClientError as e:
             _LOGGER.error(f"Network error during {method} {url}: {e}")
-            raise JablotronSessionError(f"Network error: {e}") from e
+            raise JablotronNetworkError(f"Network error: {e}") from e
         except Exception as e:
             _LOGGER.error(f"Unexpected error during {method} {url}: {e}")
-            raise JablotronSessionError(f"Request failed: {e}") from e
+            raise JablotronError(f"Request failed: {e}") from e
 
     async def _http_json(
         self,
@@ -179,8 +191,22 @@ class JablotronClient:
         headers.pop("Upgrade-Insecure-Requests", None)
 
         # Login typically returns empty JSON {} or similar on success
-        # We just need HTTP 200, don't validate JSON structure
-        await self._http_request("POST", API_LOGIN_URL, headers=headers, data=urlencode(login_data))
+        status, text = await self._http_request("POST", API_LOGIN_URL, headers=headers, data=urlencode(login_data))
+
+        if status != 200:
+            _LOGGER.error(f"Login failed with HTTP status {status}")
+            raise JablotronAuthError(f"Login failed: HTTP {status}")
+
+        try:
+            json_response = json.loads(text)
+            if isinstance(json_response, dict) and json_response.get("errorMessage"):
+                error_message = json_response["errorMessage"]
+                _LOGGER.error(f"Login failed with error message: {error_message}")
+                raise JablotronAuthError(f"Login failed: {error_message}")
+        except json.JSONDecodeError:
+            # Not a JSON response, but the status was 200, so we assume success
+            pass
+
         _LOGGER.debug("Login POST successful")
 
     async def _get_cloud_page(self):
@@ -226,11 +252,14 @@ class JablotronClient:
             await self._get_ja100_app()
             _LOGGER.info("Login successful - all cookies obtained")
 
-        except JablotronSessionError as e:
-            # Any session error during login is treated as auth error
-            # This will trigger the retry delay mechanism
-            _LOGGER.error(f"Login failed: {e}")
-            raise JablotronAuthError(f"Login failed: {e}") from e
+        except JablotronAuthError:
+            # Authentication failed, re-raise it to be handled by the coordinator
+            _LOGGER.error("Authentication failed: Invalid credentials")
+            raise
+        except (JablotronNetworkError, JablotronSessionError) as e:
+            # Any other error during login is treated as a session/network problem
+            _LOGGER.error(f"Login failed due to network/session error: {e}")
+            raise JablotronSessionError(f"Login failed: {e}") from e
 
     # ===== API Methods =====
 
@@ -270,7 +299,7 @@ class JablotronClient:
                 try:
                     await self.login()
                     self._next_retry_time = None
-                except JablotronAuthError as e:
+                except JablotronSessionError as e:
                     # Initial login failed - set retry delay
                     self._next_retry_time = time.time() + RETRY_DELAY
                     minutes = RETRY_DELAY // 60
@@ -283,6 +312,16 @@ class JablotronClient:
             # Success - clear retry timer
             self._next_retry_time = None
             return result
+
+
+        except JablotronNetworkError as e:
+            # Network error during API call - set retry delay and re-raise
+            self._next_retry_time = time.time() + RETRY_DELAY
+            minutes = RETRY_DELAY // 60
+            _LOGGER.error(f"Network error during API call. Will retry in {minutes} minutes.")
+            raise JablotronSessionError(
+                f"Network error - will retry in {minutes} minutes: {e}"
+            ) from e
 
         except JablotronSessionError as e:
             # Session error during API call - reset and try immediate re-login
@@ -300,14 +339,19 @@ class JablotronClient:
                 result = await api_func()
                 return result
 
-            except JablotronAuthError as login_error:
+            except JablotronAuthError:
+                # Re-login failed with auth error - fatal, re-raise
+                _LOGGER.error("Re-login failed due to invalid credentials.")
+                raise
+
+            except (JablotronNetworkError, JablotronSessionError) as login_error:
                 # Re-login failed - NOW set the 30-minute retry delay
                 self._next_retry_time = time.time() + RETRY_DELAY
                 minutes = RETRY_DELAY // 60
                 _LOGGER.error(
                     f"Re-login failed after session error. Will retry in {minutes} minutes."
                 )
-                raise JablotronAuthError(
+                raise JablotronSessionError(
                     f"Re-login failed - will retry in {minutes} minutes: {login_error}"
                 ) from login_error
 
@@ -374,7 +418,6 @@ class JablotronClient:
 
         _LOGGER.debug(f"Controlling {state_name}: status={status}")
 
-        # ...existing code...
 
         # Control endpoint doesn't use the "status" field in JSON, so we don't validate it
         # Just check for HTTP 200

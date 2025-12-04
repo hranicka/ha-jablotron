@@ -10,7 +10,11 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
-from .jablotron_client import JablotronAuthError, JablotronClient
+from .jablotron_client import (
+    JablotronAuthError,
+    JablotronClient,
+    JablotronSessionError,
+)
 from . import services
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +50,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         try:
             return await client.get_status()
+        except JablotronSessionError as err:
+            raise UpdateFailed(f"Error communicating with API: {err}")
         except JablotronAuthError as err:
             raise ConfigEntryAuthFailed from err
         except Exception as err:
