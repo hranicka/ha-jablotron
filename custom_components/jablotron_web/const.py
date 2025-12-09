@@ -13,7 +13,7 @@ DEFAULT_SCAN_INTERVAL = 300
 DEFAULT_TIMEOUT = 10  # 10 seconds
 
 # Retry delay for transient errors (in seconds)
-RETRY_DELAY = 1800  # 30 minutes
+RETRY_DELAY = 900  # 15 minutes
 
 # API URLs
 API_BASE_URL = "https://www.jablonet.net"
