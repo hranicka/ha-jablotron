@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_SERVICE_ID, CONF_SENSOR_NAMES, CONF_PGM_CODE, DEFAULT_SCAN_INTERVAL
+from .const import DOMAIN, CONF_SERVICE_ID, CONF_SENSOR_NAMES, CONF_PGM_CODE, DEFAULT_SCAN_INTERVAL, CONF_TIMEOUT, DEFAULT_TIMEOUT
 from .jablotron_client import JablotronClient, JablotronAuthError
 
 _LOGGER = logging.getLogger(__name__)
@@ -258,6 +258,12 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
                         "scan_interval",
                         default=self.config_entry.options.get(
                             "scan_interval", DEFAULT_SCAN_INTERVAL
+                        ),
+                    ): cv.positive_int,
+                    vol.Optional(
+                        CONF_TIMEOUT,
+                        default=self.config_entry.options.get(
+                            CONF_TIMEOUT, DEFAULT_TIMEOUT
                         ),
                     ): cv.positive_int,
                 }

@@ -7,8 +7,10 @@ CONF_PASSWORD = "password"
 CONF_SERVICE_ID = "service_id"
 CONF_SENSOR_NAMES = "sensor_names"
 CONF_PGM_CODE = "pgm_code"
+CONF_TIMEOUT = "timeout"
 
 DEFAULT_SCAN_INTERVAL = 300
+DEFAULT_TIMEOUT = 10  # 10 seconds
 
 # Retry delay for transient errors (in seconds)
 RETRY_DELAY = 1800  # 30 minutes

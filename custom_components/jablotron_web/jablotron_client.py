@@ -1,4 +1,5 @@
 """Jablotron API client with simple session management."""
+import asyncio
 import json
 import logging
 import time
@@ -6,6 +7,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
 import aiohttp
+from aiohttp import ClientTimeout
 
 from homeassistant.core import HomeAssistant
 
@@ -40,6 +42,7 @@ class JablotronClient:
         service_id: str,
         hass: HomeAssistant,
         pgm_code: str = "",
+        timeout: int = 10,
     ):
         """Initialize the client."""
         self.username = username
@@ -47,6 +50,7 @@ class JablotronClient:
         self.service_id = service_id
         self.hass = hass
         self.pgm_code = pgm_code
+        self.timeout = timeout
         self.session: Optional[aiohttp.ClientSession] = None
         self._next_retry_time: Optional[float] = None
 
@@ -72,6 +76,7 @@ class JablotronClient:
         url: str,
         headers: Optional[Dict[str, str]] = None,
         data: Optional[str] = None,
+        timeout: Optional[int] = None,
     ) -> tuple[int, str]:
         """
         Thin HTTP wrapper for all requests.
@@ -84,13 +89,20 @@ class JablotronClient:
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar())
 
+        request_timeout_seconds = timeout if timeout is not None else self.timeout
+
         try:
+            request_timeout = ClientTimeout(total=request_timeout_seconds)
             if method.upper() == "GET":
-                async with self.session.get(url, headers=headers) as response:
+                async with self.session.get(
+                    url, headers=headers, timeout=request_timeout
+                ) as response:
                     text = await response.text()
                     status = response.status
             else:  # POST
-                async with self.session.post(url, headers=headers, data=data) as response:
+                async with self.session.post(
+                    url, headers=headers, data=data, timeout=request_timeout
+                ) as response:
                     text = await response.text()
                     status = response.status
 
@@ -103,7 +115,7 @@ class JablotronClient:
 
             return status, text
 
-        except aiohttp.ClientError as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             _LOGGER.error(f"Network error during {method} {url}: {e}")
             raise JablotronNetworkError(f"Network error: {e}") from e
         except Exception as e:
@@ -117,6 +129,7 @@ class JablotronClient:
         headers: Optional[Dict[str, str]] = None,
         data: Optional[str] = None,
         expected_status: int = 200,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         HTTP request expecting JSON response.
@@ -124,7 +137,7 @@ class JablotronClient:
         Returns: Parsed JSON dict
         Raises: JablotronSessionError if response is not valid JSON or status doesn't match
         """
-        status, text = await self._http_request(method, url, headers, data)
+        status, text = await self._http_request(method, url, headers, data, timeout=timeout)
 
         try:
             json_data = json.loads(text)
@@ -216,7 +229,7 @@ class JablotronClient:
         _LOGGER.debug("Login POST successful")
 
     async def _get_cloud_page(self):
-        """Step 3: GET /cloud to obtain lastMode cookie."""
+        """Step 3: GET /cloud to obtain the lastMode cookie."""
         _LOGGER.debug("Step 3: Getting /cloud page for lastMode cookie")
 
         # Regular browser request - use common headers and add Referer
