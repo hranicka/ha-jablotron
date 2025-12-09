@@ -362,7 +362,7 @@ class JablotronClient:
                 raise
 
             except (JablotronNetworkError, JablotronSessionError) as login_error:
-                # Re-login failed - NOW set the 30-minute retry delay
+                # Re-login failed - NOW set the 15-minute retry delay
                 self._next_retry_time = time.time() + RETRY_DELAY
                 minutes = RETRY_DELAY // 60
                 _LOGGER.error(

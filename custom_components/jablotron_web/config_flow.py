@@ -227,11 +227,14 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
                 # Reload to apply new credentials (creates new client instance)
                 await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
-            # Save options (scan_interval)
-            # If only scan_interval changed, the update listener will handle the reload
+            # Save options (scan_interval and timeout)
+            # If only options changed, the update listener will handle the reload
             return self.async_create_entry(
                 title="",
-                data={"scan_interval": user_input.get("scan_interval", DEFAULT_SCAN_INTERVAL)}
+                data={
+                    "scan_interval": user_input.get("scan_interval", DEFAULT_SCAN_INTERVAL),
+                    "timeout": user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                }
             )
 
         return self.async_show_form(

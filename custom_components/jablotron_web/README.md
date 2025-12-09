@@ -238,9 +238,10 @@ Restart Home Assistant after making changes.
 ### Common Issues
 
 **"Jablotron API is unavailable, next retry in X seconds"**
-- API is temporarily down or unreachable
-- Integration will automatically retry after 30 minutes
+- API is temporarily down, unreachable, or responded too slowly (timeout)
+- Integration will automatically retry after 15 minutes
 - Prevents hammering the API when the service is down
+- You can adjust timeout in integration options if needed
 
 **Session keeps expiring**
 - Check if credentials are correct

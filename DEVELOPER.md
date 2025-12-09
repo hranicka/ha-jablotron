@@ -832,16 +832,17 @@ config_flow.async_step_sensors() → Name sensors
     ↓
 __init__.async_setup_entry()
     ↓
-Create JablotronClient(username, password, service_id, hass, pgm_code)
+Create JablotronClient(username, password, service_id, hass, pgm_code, timeout=10)
     ↓
 Create DataUpdateCoordinator
     ↓
 coordinator.async_config_entry_first_refresh()
     ↓
-JablotronClient.get_status()
+JablotronClient.get_status() (with 10-second timeout)
     ↓
     ├─ If no PHPSESSID → login()
     ├─ If status == 300 → login() + retry
+    ├─ If timeout → Raise error → 15-min retry delay
     └─ Return data
     ↓
 coordinator.data = {teplomery: {...}, pgm: {...}, sekce: {...}, pir: {...}, permissions: {...}}
@@ -856,7 +857,7 @@ Every 300s: coordinator triggers update → repeat get_status()
     ↓
 User switches PGM:
     ├─ switch._async_control_pgm() → Freeze state
-    ├─ client.control_pgm(pgm_id, status) → Send command
+    ├─ client.control_pgm(pgm_id, status) → Send command (with 10-second timeout)
     ├─ Process response → Update coordinator.data immediately
     ├─ coordinator.async_request_refresh() → Full sync
     └─ Unfreeze state
