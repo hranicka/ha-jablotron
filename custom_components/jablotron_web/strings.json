@@ -34,7 +34,9 @@
           "password": "Password (leave blank to keep current)",
           "service_id": "Service ID",
           "pgm_code": "PGM Control Code",
-          "scan_interval": "Update interval (seconds)"
+          "scan_interval": "Update interval (seconds)",
+          "timeout": "Request timeout (seconds)",
+          "retry_delay": "Retry delay after network errors (seconds)"
         }
       }
     }

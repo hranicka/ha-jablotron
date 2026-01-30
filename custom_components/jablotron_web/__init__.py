@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, DEFAULT_TIMEOUT
+from .const import DOMAIN, DEFAULT_TIMEOUT, DEFAULT_RETRY_DELAY
 from .jablotron_client import (
     JablotronAuthError,
     JablotronClient,
@@ -30,8 +30,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     service_id = entry.data.get("service_id", "")
     pgm_code = entry.data.get("pgm_code", "")
     timeout = entry.options.get("timeout", DEFAULT_TIMEOUT)
+    retry_delay = entry.options.get("retry_delay", DEFAULT_RETRY_DELAY)
 
-    client = JablotronClient(username, password, service_id, hass, pgm_code, timeout=timeout)
+    client = JablotronClient(username, password, service_id, hass, pgm_code, timeout=timeout, retry_delay=retry_delay)
 
     async def async_update_data():
         """Fetch data from API."""

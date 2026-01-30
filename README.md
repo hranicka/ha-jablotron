@@ -13,7 +13,7 @@ Full-featured Home Assistant integration for Jablotron JA-100 alarm systems.
 - ✅ PIR motion sensors
 - ✅ PGM switching (requires control code)
 - ✅ Multi-device support via `service_id`
-- ✅ Intelligent retry backoff (15 minutes)
+- ✅ Intelligent retry backoff (configurable, default: 5 minutes)
 - ✅ Configurable timeout (default: 10 seconds)
 - ✅ Countdown timer to next update
 - ✅ Manual update trigger button

@@ -166,6 +166,8 @@ Integration behavior:
 ### Options (After Setup)
 Settings → Devices & Services → Jablotron Web → Configure:
 - **Scan interval**: Update frequency (default: 300s)
+- **Timeout**: Request timeout in seconds (default: 10s)
+- **Retry delay**: How long to wait after network errors before retrying (default: 300s / 5 minutes)
 - **Credentials**: Change username, password, service_id, or pgm_code
 - Changes trigger automatic reload
 
@@ -239,9 +241,9 @@ Restart Home Assistant after making changes.
 
 **"Jablotron API is unavailable, next retry in X seconds"**
 - API is temporarily down, unreachable, or responded too slowly (timeout)
-- Integration will automatically retry after 15 minutes
+- Integration will automatically retry after the configured delay (default: 5 minutes)
 - Prevents hammering the API when the service is down
-- You can adjust timeout in integration options if needed
+- You can adjust both timeout and retry_delay in integration options if needed
 
 **Session keeps expiring**
 - Check if credentials are correct

@@ -114,10 +114,11 @@ Allows changing settings after setup.
 
 **Initialization**:
 ```python
-__init__(username, password, service_id, hass, pgm_code)
-    → Stores credentials and PGM code
+__init__(username, password, service_id, hass, pgm_code, timeout, retry_delay)
+    → Stores credentials, PGM code, timeout, and retry_delay
     → Initializes session = None (created on demand)
     → Initializes _next_retry_time = None (for retry backoff)
+    → retry_delay defaults to 300 seconds (5 minutes)
 ```
 
 **Architecture**: Clean design with thin HTTP wrapper and uniform error handling.
@@ -184,7 +185,7 @@ Wrapper for all API calls with automatic error recovery:
    - Call `_reset_session()` (complete cleanup)
    - **Immediately attempt re-login** (no delay)
    - If re-login succeeds → retry API call, return data
-   - If re-login fails → set 30-minute retry delay, raise `JablotronAuthError`
+   - If re-login fails → set retry delay (configurable, default: 5 minutes), raise `JablotronAuthError`
 
 **Note**: Retry delay is only set when re-login fails, not when the initial API call fails. This allows fast recovery from common session expiry scenarios.
 
@@ -204,7 +205,7 @@ API Call → JablotronSessionError (non-200 HTTP, invalid JSON, status != 200)
     │     → Return data (recovery time: ~2-5 seconds)
     │
     └── Re-login FAILS
-          → Set _next_retry_time = now + 30 minutes
+          → Set _next_retry_time = now + self.retry_delay (default: 5 minutes)
           → Raise JablotronAuthError
           → Coordinator raises UpdateFailed
           → Entities show "Unavailable"
@@ -607,7 +608,7 @@ Different PGM types behave differently when controlled:
    - If `responseCode: 200` → Success
 3. **Use response `result` field** for actual state (don't assume)
 4. **Handle network errors** with retry backoff
-5. **Rate limiting**: Avoid hammering API (use 30min backoff on errors)
+5. **Rate limiting**: Avoid hammering API (configurable retry backoff, default: 5 minutes)
 
 ---
 
@@ -842,7 +843,7 @@ JablotronClient.get_status() (with 10-second timeout)
     ↓
     ├─ If no PHPSESSID → login()
     ├─ If status == 300 → login() + retry
-    ├─ If timeout → Raise error → 15-min retry delay
+    ├─ If timeout → Raise error → retry delay (default: 5 min)
     └─ Return data
     ↓
 coordinator.data = {teplomery: {...}, pgm: {...}, sekce: {...}, pir: {...}, permissions: {...}}

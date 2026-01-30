@@ -34,7 +34,9 @@
           "password": "Heslo (nechte prázdné pro zachování současného)",
           "service_id": "ID služby",
           "pgm_code": "Kód pro ovládání PGM",
-          "scan_interval": "Interval aktualizace (sekundy)"
+          "scan_interval": "Interval aktualizace (sekundy)",
+          "timeout": "Timeout požadavku (sekundy)",
+          "retry_delay": "Prodleva při opakování po síťové chybě (sekundy)"
         }
       }
     }

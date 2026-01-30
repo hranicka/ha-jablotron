@@ -8,12 +8,14 @@ CONF_SERVICE_ID = "service_id"
 CONF_SENSOR_NAMES = "sensor_names"
 CONF_PGM_CODE = "pgm_code"
 CONF_TIMEOUT = "timeout"
+CONF_RETRY_DELAY = "retry_delay"
 
 DEFAULT_SCAN_INTERVAL = 300
 DEFAULT_TIMEOUT = 10  # 10 seconds
+DEFAULT_RETRY_DELAY = 300  # 5 minutes (in seconds)
 
-# Retry delay for transient errors (in seconds)
-RETRY_DELAY = 900  # 15 minutes
+# Legacy constant for backward compatibility
+RETRY_DELAY = DEFAULT_RETRY_DELAY
 
 # API URLs
 API_BASE_URL = "https://www.jablonet.net"

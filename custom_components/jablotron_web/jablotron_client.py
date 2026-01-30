@@ -11,7 +11,7 @@ from aiohttp import ClientTimeout
 
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_CONTROL_URL, API_LOGIN_URL, API_STATUS_URL, RETRY_DELAY
+from .const import API_BASE_URL, API_CONTROL_URL, API_LOGIN_URL, API_STATUS_URL, DEFAULT_RETRY_DELAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class JablotronClient:
         hass: HomeAssistant,
         pgm_code: str = "",
         timeout: int = 10,
+        retry_delay: int = DEFAULT_RETRY_DELAY,
     ):
         """Initialize the client."""
         self.username = username
@@ -51,6 +52,7 @@ class JablotronClient:
         self.hass = hass
         self.pgm_code = pgm_code
         self.timeout = timeout
+        self.retry_delay = retry_delay
         self.session: Optional[aiohttp.ClientSession] = None
         self._next_retry_time: Optional[float] = None
 
@@ -319,8 +321,8 @@ class JablotronClient:
                     await self.login()
                 except JablotronSessionError as e:
                     # Initial login failed - set retry delay
-                    self._next_retry_time = time.time() + RETRY_DELAY
-                    minutes = RETRY_DELAY // 60
+                    self._next_retry_time = time.time() + self.retry_delay
+                    minutes = self.retry_delay // 60
                     _LOGGER.error(f"Initial login failed. Will retry in {minutes} minutes.")
                     raise
 
@@ -334,8 +336,8 @@ class JablotronClient:
 
         except JablotronNetworkError as e:
             # Network error during API call - set retry delay and re-raise
-            self._next_retry_time = time.time() + RETRY_DELAY
-            minutes = RETRY_DELAY // 60
+            self._next_retry_time = time.time() + self.retry_delay
+            minutes = self.retry_delay // 60
             _LOGGER.error(f"Network error during API call. Will retry in {minutes} minutes.")
             raise JablotronSessionError(
                 f"Network error - will retry in {minutes} minutes: {e}"
@@ -362,9 +364,9 @@ class JablotronClient:
                 raise
 
             except (JablotronNetworkError, JablotronSessionError) as login_error:
-                # Re-login failed - NOW set the 15-minute retry delay
-                self._next_retry_time = time.time() + RETRY_DELAY
-                minutes = RETRY_DELAY // 60
+                # Re-login failed - NOW set the retry delay
+                self._next_retry_time = time.time() + self.retry_delay
+                minutes = self.retry_delay // 60
                 _LOGGER.error(
                     f"Re-login failed after session error. Will retry in {minutes} minutes."
                 )

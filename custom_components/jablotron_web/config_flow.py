@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_SERVICE_ID, CONF_SENSOR_NAMES, CONF_PGM_CODE, DEFAULT_SCAN_INTERVAL, CONF_TIMEOUT, DEFAULT_TIMEOUT
+from .const import DOMAIN, CONF_SERVICE_ID, CONF_SENSOR_NAMES, CONF_PGM_CODE, DEFAULT_SCAN_INTERVAL, CONF_TIMEOUT, DEFAULT_TIMEOUT, CONF_RETRY_DELAY, DEFAULT_RETRY_DELAY
 from .jablotron_client import JablotronClient, JablotronAuthError
 
 _LOGGER = logging.getLogger(__name__)
@@ -227,13 +227,14 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
                 # Reload to apply new credentials (creates new client instance)
                 await self.hass.config_entries.async_reload(self.config_entry.entry_id)
 
-            # Save options (scan_interval and timeout)
+            # Save options (scan_interval, timeout, and retry_delay)
             # If only options changed, the update listener will handle the reload
             return self.async_create_entry(
                 title="",
                 data={
                     "scan_interval": user_input.get("scan_interval", DEFAULT_SCAN_INTERVAL),
                     "timeout": user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                    "retry_delay": user_input.get(CONF_RETRY_DELAY, DEFAULT_RETRY_DELAY),
                 }
             )
 
@@ -267,6 +268,12 @@ class JablotronOptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_TIMEOUT,
                         default=self.config_entry.options.get(
                             CONF_TIMEOUT, DEFAULT_TIMEOUT
+                        ),
+                    ): cv.positive_int,
+                    vol.Optional(
+                        CONF_RETRY_DELAY,
+                        default=self.config_entry.options.get(
+                            CONF_RETRY_DELAY, DEFAULT_RETRY_DELAY
                         ),
                     ): cv.positive_int,
                 }
