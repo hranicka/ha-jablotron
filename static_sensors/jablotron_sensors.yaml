@@ -1,5 +1,7 @@
-# Jablotron Sensors Configuration for Home Assistant
-# Add this to your configuration.yaml or include it as a package
+# Jablotron Sensors Configuration for Home Assistant (Static REST Sensor Alternative)
+# Add this to your configuration.yaml or include it as a package.
+# See docs/static-sensors.md for full instructions and limitations.
+# Recommended: use the custom component instead (automatic session management).
 
 rest:
   - resource: "https://www.jablonet.net/app/ja100/ajax/stav.php"

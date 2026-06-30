@@ -1,68 +1,72 @@
 # Jablotron Web Integration for Home Assistant
 
-Full-featured Home Assistant integration for Jablotron JA-100 alarm systems.
+Full-featured Home Assistant integration for Jablotron JA-100 alarm systems via the [jablonet.net](https://www.jablonet.net) cloud API.
 
 ## Features
 
-- ✅ Automatic session management with 4-step authentication
-- ✅ Auto re-login on session expiration
-- ✅ Reauth flow support
-- ✅ Temperature sensors with customizable names
-- ✅ Alarm sections (armed/disarmed state)
-- ✅ PGM outputs (binary sensors or switches)
-- ✅ PIR motion sensors
-- ✅ PGM switching (requires control code)
-- ✅ Multi-device support via `service_id`
-- ✅ Intelligent retry backoff (configurable, default: 5 minutes)
-- ✅ Configurable timeout (default: 10 seconds)
-- ✅ Countdown timer to next update
-- ✅ Manual update trigger button
-- ✅ UI configuration with option flow
+- Automatic session management with 4-step browser-like authentication
+- Auto re-login on session expiration (no user intervention needed)
+- Reauth flow support when credentials change
+- Temperature sensors with customizable names
+- Alarm sections as binary sensors (armed/disarmed state)
+- PGM outputs — read-only binary sensors or controllable switches
+- PIR motion sensors
+- PGM switching (requires a 4-digit control PIN code)
+- Multi-device / multi-service support via `service_id`
+- Configurable polling interval, request timeout, and retry backoff
+- Countdown timer tracking next data update
+- Manual force-update button entity
+- Optional YAML-based REST sensor alternative
 
 ## Installation
 
 ### Via HACS (Recommended)
 
-1. Add custom repository:
-   - HACS → Integrations → ⋮ → Custom repositories
-   - URL: `https://github.com/hranicka/ha-jablotron`
-   - Category: Integration
-
-2. Install:
-   - HACS → Integrations → Search "Jablotron Web"
-   - Click "Download" → Restart Home Assistant
-
-3. Configure:
-   - Settings → Devices & Services → Add Integration
-   - Search "Jablotron Web"
-   - Enter credentials
-
-**[Full Documentation](custom_components/jablotron_web/README.md)**
+1. Add custom repository: **HACS → Integrations → ⋮ → Custom repositories** → `https://github.com/hranicka/ha-jablotron` (Integration)
+2. Install from HACS integration browser → restart Home Assistant
+3. Configure: **Settings → Devices & Services → Add Integration → Jablotron Web**
 
 ### Manual Installation
 
 ```bash
+mkdir -p /config/custom_components/
 cp -r custom_components/jablotron_web /config/custom_components/
 # Restart Home Assistant
 ```
 
-## Alternative: Static REST Sensors
+## Getting Started
 
-Simple YAML-based configuration without automatic session management.
-
-**[See static_sensors/README.md](static_sensors/README.md)**
-
----
+- **[docs/configuration.md](docs/configuration.md)** — Full setup guide, config options, multi-service setup, services reference
+- **[docs/entities.md](docs/entities.md)** — What entities are created and how they behave
+- **[docs/static-sensors.md](docs/static-sensors.md)** — Alternative YAML-based REST sensor setup
 
 ## Documentation
 
-- **[User Guide](custom_components/jablotron_web/README.md)** - Setup, configuration, features
-- **[Developer Guide](DEVELOPER.md)** - Code structure, API reference, development
+- **[docs/architecture.md](docs/architecture.md)** — System architecture, data flow, component structure
+- **[docs/api-reference.md](docs/api-reference.md)** — Jablotron API reference (auth flow, status, control endpoints)
+- **[docs/session-management.md](docs/session-management.md)** — Authentication, session recovery, retry backoff logic
+- **[docs/configuration.md](docs/configuration.md)** — Setup, options, services, multi-device
+- **[docs/entities.md](docs/entities.md)** — Entity types, value sources, custom naming
+- **[docs/static-sensors.md](docs/static-sensors.md)** — YAML-based REST sensor alternative
 
----
+## Testing & Debugging
+
+A standalone test script replicating the API login flow:
+
+```bash
+python test_jablonet.py <username> <password> [service_id]
+```
+
+Enable debug logging in Home Assistant:
+
+```yaml
+logger:
+  logs:
+    custom_components.jablotron_web: debug
+```
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
-**Disclaimer**: This software is provided for educational purposes only, without any warranty. Use at your own risk. The author assumes no responsibility for any damages or issues arising from its use.
+**Disclaimer**: Educational use only, no warranty. Use at your own risk.
