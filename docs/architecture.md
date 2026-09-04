@@ -9,7 +9,7 @@ Home Assistant custom component for Jablotron JA-100 alarm systems, connecting v
 Handles the Home Assistant config entry lifecycle: setup, reload, unload. Creates a `JablotronClient`, a `DataUpdateCoordinator`, and forwards to all platforms.
 
 - **Platforms**: `SENSOR`, `BINARY_SENSOR`, `SWITCH`, `BUTTON`
-- **Data flow**: Stores `{"coordinator", "client", "last_update_time"}` under `hass.data[DOMAIN][entry_id]`
+- **Data flow**: Stores `{"coordinator", "client"}` under `hass.data[DOMAIN][entry_id]`; the last successful update timestamp lives on `coordinator.last_updated`
 - **First refresh** runs synchronously before any entities are created, ensuring data is available at entity setup time
 
 ### `config_flow.py` — Configuration UI
@@ -79,8 +79,8 @@ Ongoing operation:
 User controls PGM switch:
   switch._async_control_pgm(turn_on=True)
     → Set optimistic state (freezes coordinator updates)
-    → client.control_pgm(pgm_id, 1)
-    → Update coordinator.data with response result
+    → client.control_pgm(pgm_id, 1)  [retry_on_relogin=False for pulse PGMs]
+    → coordinator.set_pgm_state() with response result
     → coordinator.async_request_refresh() → full sync
     → Clear optimistic state
 ```
@@ -98,11 +98,11 @@ Pattern: `{entry_id}_{entity_type}_{id}`
 - PIR: `{entry_id}_pir_{pir_id}`
 - Next update: `{entry_id}_next_update`
 
-The coordinator stores full raw API response in `coordinator.data`. All entities read from this shared dict. When switching, the switch directly mutates `coordinator.data["pgm"][pgm_id]` before triggering a full refresh — this is the only mutation path for coordinator data during normal operation.
+The coordinator stores full raw API response in `coordinator.data`. All entities read from this shared dict. After a PGM control command, the switch updates the cached state via `coordinator.set_pgm_state(pgm_id, stav, ts)` — the single sanctioned mutation path for coordinator data during normal operation (`JablotronDataCoordinator` in `__init__.py`).
 
 ## Version Info
 
 - **Component version**: 0.0.35 (manifest.json)
-- **HA minimum**: 2024.1.0 (hacs.json)
+- **HA minimum**: 2025.12.0 (hacs.json) — `ConfigFlowResult`, automatic `OptionsFlow.config_entry`, and explicit `DataUpdateCoordinator(config_entry=...)`
 - **Integration type**: hub (aggregation, forwards to platforms)
 - **IoT class**: cloud_polling

@@ -32,10 +32,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
         # Reload each entry
         for entry in entries:
-            _LOGGER.info(f"Reloading Jablotron Web entry: {entry.title}")
+            _LOGGER.info("Reloading Jablotron Web entry: %s", entry.title)
             await hass.config_entries.async_reload(entry.entry_id)
 
-        _LOGGER.info(f"Reloaded {len(entries)} Jablotron Web integration(s)")
+        _LOGGER.info("Reloaded %d Jablotron Web integration(s)", len(entries))
 
     async def async_trigger_update(call: ServiceCall) -> None:
         """Trigger an immediate update of all Jablotron coordinators."""
@@ -51,11 +51,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if "coordinator" in entry_data:
                 coordinator = entry_data["coordinator"]
-                _LOGGER.info(f"Triggering update for entry: {entry_id}")
+                _LOGGER.info("Triggering update for entry: %s", entry_id)
                 await coordinator.async_request_refresh()
                 update_count += 1
 
-        _LOGGER.info(f"Triggered update for {update_count} Jablotron integration(s)")
+        _LOGGER.info("Triggered update for %d Jablotron integration(s)", update_count)
 
     hass.services.async_register(
         DOMAIN,

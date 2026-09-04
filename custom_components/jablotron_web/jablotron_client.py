@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlencode
 
 import aiohttp
@@ -11,7 +11,18 @@ from aiohttp import ClientTimeout
 
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_CONTROL_URL, API_LOGIN_URL, API_STATUS_URL, DEFAULT_RETRY_DELAY
+from .const import (
+    ACTIVE_TAB_HEAT,
+    API_BASE_URL,
+    API_CONTROL_URL,
+    API_LOGIN_URL,
+    API_STATUS_URL,
+    DEFAULT_FIREFOX_UA,
+    DEFAULT_RETRY_DELAY,
+    JA_STATUS_VALUE,
+    LOGIN_TYPE_VALUE,
+    UID_SUFFIX,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,10 +64,11 @@ class JablotronClient:
         self.pgm_code = pgm_code
         self.timeout = timeout
         self.retry_delay = retry_delay
-        self.session: Optional[aiohttp.ClientSession] = None
-        self._next_retry_time: Optional[float] = None
+        self.session: aiohttp.ClientSession | None = None
+        self._next_retry_time: float | None = None
+        self._lock = asyncio.Lock()
 
-    def get_next_retry_time(self) -> Optional[float]:
+    def get_next_retry_time(self) -> float | None:
         """Get timestamp when next retry is allowed.
 
         Returns:
@@ -67,8 +79,9 @@ class JablotronClient:
     async def reset_session_and_clear_retry(self):
         """Reset the session and clear the retry timer. Called when retry delay expires."""
         _LOGGER.info("Clearing retry timer and resetting session for fresh retry")
-        self._next_retry_time = None
-        await self._reset_session()
+        async with self._lock:
+            self._next_retry_time = None
+            await self._reset_session()
 
     # ===== HTTP Client Wrapper =====
 
@@ -76,9 +89,9 @@ class JablotronClient:
         self,
         method: str,
         url: str,
-        headers: Optional[Dict[str, str]] = None,
-        data: Optional[str] = None,
-        timeout: Optional[int] = None,
+        headers: dict[str, str] | None = None,
+        data: str | None = None,
+        timeout: int | None = None,
     ) -> tuple[int, str]:
         """
         Thin HTTP wrapper for all requests.
@@ -109,30 +122,33 @@ class JablotronClient:
                     status = response.status
 
             if status != 200:
-                _LOGGER.error(f"HTTP {method} {url} returned status {status}")
+                _LOGGER.error("HTTP %s %s returned status %s", method, url, status)
                 if 400 <= status < 500:
                     raise JablotronSessionError(f"Request failed: HTTP {status}")
                 if 500 <= status < 600:
                     raise JablotronNetworkError(f"Server error: HTTP {status}")
+                raise JablotronNetworkError(f"Unexpected HTTP status: {status}")
 
             return status, text
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            _LOGGER.error(f"Network error during {method} {url}: {e}")
+            _LOGGER.error("Network error during %s %s: %s", method, url, e)
             raise JablotronNetworkError(f"Network error: {e}") from e
+        except JablotronError:
+            raise
         except Exception as e:
-            _LOGGER.error(f"Unexpected error during {method} {url}: {e}")
+            _LOGGER.error("Unexpected error during %s %s: %s", method, url, e)
             raise JablotronError(f"Request failed: {e}") from e
 
     async def _http_json(
         self,
         method: str,
         url: str,
-        headers: Optional[Dict[str, str]] = None,
-        data: Optional[str] = None,
+        headers: dict[str, str] | None = None,
+        data: str | None = None,
         expected_status: int = 200,
-        timeout: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
         """
         HTTP request expecting JSON response.
 
@@ -144,8 +160,8 @@ class JablotronClient:
         try:
             json_data = json.loads(text)
         except json.JSONDecodeError as e:
-            _LOGGER.error(f"Invalid JSON from {url}: {text[:200]}")
-            raise JablotronSessionError(f"Invalid JSON response") from e
+            _LOGGER.error("Invalid JSON from %s: %s", url, text[:200])
+            raise JablotronSessionError("Invalid JSON response") from e
 
         # Check if JSON contains error status (like status: 300 for session expired)
         if isinstance(json_data, dict) and "status" in json_data:
@@ -161,10 +177,10 @@ class JablotronClient:
 
     # ===== Session Management =====
 
-    def _get_common_headers(self) -> Dict[str, str]:
+    def _get_common_headers(self) -> dict[str, str]:
         """Get common browser headers that all requests share."""
         return {
-            "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0",
+            "User-Agent": DEFAULT_FIREFOX_UA,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Upgrade-Insecure-Requests": "1",
@@ -195,8 +211,8 @@ class JablotronClient:
         login_data = {
             "login": self.username,
             "heslo": self.password,
-            "aStatus": "200",
-            "loginType": "Login",
+            "aStatus": JA_STATUS_VALUE,
+            "loginType": LOGIN_TYPE_VALUE,
         }
 
         # Start with common browser headers, then override for API request
@@ -215,18 +231,19 @@ class JablotronClient:
         status, text = await self._http_request("POST", API_LOGIN_URL, headers=headers, data=urlencode(login_data))
 
         if status != 200:
-            _LOGGER.error(f"Login failed with HTTP status {status}")
+            _LOGGER.error("Login failed with HTTP status %s", status)
             raise JablotronAuthError(f"Login failed: HTTP {status}")
 
         try:
-            json_response = json.loads(text)
-            if isinstance(json_response, dict) and json_response.get("errorMessage"):
-                error_message = json_response["errorMessage"]
-                _LOGGER.error(f"Login failed with error message: {error_message}")
-                raise JablotronAuthError(f"Login failed: {error_message}")
+            json_response = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError:
-            # Not a JSON response, but the status was 200, so we assume success
-            pass
+            _LOGGER.error("Login returned non-JSON response, assuming success (HTTP 200)")
+            json_response = {}
+
+        if isinstance(json_response, dict) and json_response.get("errorMessage"):
+            error_message = json_response["errorMessage"]
+            _LOGGER.error("Login failed with error message: %s", error_message)
+            raise JablotronAuthError(f"Login failed: {error_message}")
 
         _LOGGER.debug("Login POST successful")
 
@@ -279,12 +296,12 @@ class JablotronClient:
             raise
         except (JablotronNetworkError, JablotronSessionError) as e:
             # Any other error during login is treated as a session/network problem
-            _LOGGER.error(f"Login failed due to network/session error: {e}")
+            _LOGGER.error("Login failed due to network/session error: %s", e)
             raise JablotronSessionError(f"Login failed: {e}") from e
 
     # ===== API Methods =====
 
-    async def get_status(self) -> Dict[str, Any]:
+    async def get_status(self) -> dict[str, Any]:
         """
         Get the current status from stav.php.
 
@@ -293,13 +310,29 @@ class JablotronClient:
         """
         return await self._with_session_handling(self._fetch_status)
 
-    async def control_pgm(self, pgm_id: str, status: int) -> Dict[str, Any]:
-        """Control a PGM output (turn on/off)."""
+    async def control_pgm(
+        self, pgm_id: str, status: int, *, retry_on_relogin: bool = True
+    ) -> dict[str, Any]:
+        """Control a PGM output (turn on/off).
+
+        Args:
+            pgm_id: PGM identifier from the status payload.
+            status: 1 to switch on, 0 to switch off.
+            retry_on_relogin: Retry the command after a session recovery.
+                Disable for non-idempotent commands (pulse PGMs) where a
+                retry could execute the command twice.
+        """
         return await self._with_session_handling(
-            lambda: self._control_pgm_internal(pgm_id, status)
+            lambda: self._control_pgm_internal(pgm_id, status),
+            retry_on_relogin=retry_on_relogin,
         )
 
-    async def _with_session_handling(self, api_func):
+    async def _with_session_handling(
+        self,
+        api_func: Callable[[], Awaitable[dict[str, Any]]],
+        *,
+        retry_on_relogin: bool = True,
+    ) -> dict[str, Any]:
         """
         Wrapper for API calls with automatic session handling.
 
@@ -307,74 +340,69 @@ class JablotronClient:
         1. Ensure the session exists (login if needed)
         2. Try API call
         3. On JablotronSessionError -> reset session, try immediate re-login
-        4. If re-login succeeds -> retry API call
-        5. If re-login fails -> set a 30-minute retry delay
+        4. If re-login succeeds -> retry API call (unless retry_on_relogin=False)
+        5. If re-login fails (any reason) -> set a configurable retry delay
         """
-
-        # Try the API call
-        try:
-            # Ensure we have a session (login if needed)
-            if self.session is None or len(self.session.cookie_jar) == 0:
+        async with self._lock:
+            # Ensure we have a session — only needed on first call or after expiry
+            if self.session is None or self.session.closed or len(self.session.cookie_jar) == 0:
                 _LOGGER.info("No session found, performing initial login")
-                await self._reset_session()
                 try:
                     await self.login()
                 except JablotronSessionError as e:
                     # Initial login failed - set retry delay
                     self._next_retry_time = time.time() + self.retry_delay
                     minutes = self.retry_delay // 60
-                    _LOGGER.error(f"Initial login failed. Will retry in {minutes} minutes.")
+                    _LOGGER.error("Initial login failed. Will retry in %s minutes.", minutes)
                     raise
 
-            # Call the actual API method
+        # API call outside lock — cookies are valid and stable across concurrent calls
+        try:
             result = await api_func()
-
-            # Success - clear retry timer
             self._next_retry_time = None
             return result
 
-
-        except JablotronNetworkError as e:
-            # Network error during API call - set retry delay and re-raise
-            self._next_retry_time = time.time() + self.retry_delay
-            minutes = self.retry_delay // 60
-            _LOGGER.error(f"Network error during API call. Will retry in {minutes} minutes.")
-            raise JablotronSessionError(
-                f"Network error - will retry in {minutes} minutes: {e}"
-            ) from e
+        except JablotronNetworkError:
+            # Network error during API call - re-raise as-is (transient, no re-login needed)
+            raise
 
         except JablotronSessionError as e:
             # Session error during API call - reset and try immediate re-login
-            _LOGGER.error(f"Session error detected during API call: {e}")
-            await self._reset_session()
+            _LOGGER.error("Session error detected during API call: %s", e)
 
-            # Try immediate re-login
-            _LOGGER.info("Attempting immediate re-login after session error")
-            try:
-                await self.login()
-                _LOGGER.info("Re-login successful, retrying API call")
+            async with self._lock:
+                await self._reset_session()
+                _LOGGER.info("Attempting immediate re-login after session error")
+                try:
+                    await self.login()
+                    _LOGGER.info("Re-login successful")
+                except JablotronAuthError as err:
+                    _LOGGER.error("Re-login failed: %s", err)
+                    self._next_retry_time = time.time() + self.retry_delay
+                    raise
+                except Exception as err:
+                    # Any other re-login failure (network, server) — back off too,
+                    # otherwise the coordinator would retry the full login every poll
+                    _LOGGER.warning("Re-login failed after session error: %s", err)
+                    self._next_retry_time = time.time() + self.retry_delay
+                    raise
 
-                # Retry the API call
-                result = await api_func()
-                return result
-
-            except JablotronAuthError:
-                # Re-login failed with auth error - fatal, re-raise
-                _LOGGER.error("Re-login failed due to invalid credentials.")
-                raise
-
-            except (JablotronNetworkError, JablotronSessionError) as login_error:
-                # Re-login failed - NOW set the retry delay
-                self._next_retry_time = time.time() + self.retry_delay
-                minutes = self.retry_delay // 60
-                _LOGGER.error(
-                    f"Re-login failed after session error. Will retry in {minutes} minutes."
-                )
+            # Retry API call outside lock — cookies are now valid
+            if not retry_on_relogin:
+                # The command may or may not have executed before the session
+                # error; retrying could fire it twice. The session itself is
+                # healthy again, so let the caller decide whether to repeat.
                 raise JablotronSessionError(
-                    f"Re-login failed - will retry in {minutes} minutes: {login_error}"
-                ) from login_error
+                    f"Command not retried after session recovery (non-idempotent): {e}"
+                ) from e
+            return await api_func()
 
-    async def _fetch_status(self) -> Dict[str, Any]:
+        except JablotronError as e:
+            # Catch-all for other Jablotron errors (e.g., JablotronAuthError from api_func)
+            _LOGGER.warning("API call failed: %s", e)
+            raise
+
+    async def _fetch_status(self) -> dict[str, Any]:
         """Internal method to fetch status from stav.php."""
         referer = f"{API_BASE_URL}/app/ja100"
         if self.service_id:
@@ -393,19 +421,19 @@ class JablotronClient:
         headers.pop("Upgrade-Insecure-Requests", None)
 
         # Use 'heat' to get temperature sensors and PGM data
-        payload = "activeTab=heat"
+        payload = ACTIVE_TAB_HEAT
         if self.service_id:
             payload += f"&service_id={self.service_id}"
 
-        _LOGGER.debug(f"Fetching status from {API_STATUS_URL}")
+        _LOGGER.debug("Fetching status from %s", API_STATUS_URL)
 
         # This will raise JablotronSessionError if status != 200 in JSON
         data = await self._http_json("POST", API_STATUS_URL, headers=headers, data=payload)
 
-        _LOGGER.debug(f"Status fetched successfully: {len(str(data))} bytes")
+        _LOGGER.debug("Status fetched successfully: %s bytes", len(str(data)))
         return data
 
-    async def _control_pgm_internal(self, pgm_id: str, status: int) -> Dict[str, Any]:
+    async def _control_pgm_internal(self, pgm_id: str, status: int) -> dict[str, Any]:
         """Internal method to control a PGM output."""
         referer = f"{API_BASE_URL}/app/ja100"
         if self.service_id:
@@ -424,9 +452,13 @@ class JablotronClient:
         headers.pop("Upgrade-Insecure-Requests", None)
 
         # Build the state_name (e.g., PGM_7 for pgm_id "6")
-        pgm_index = int(pgm_id) + 1
+        try:
+            pgm_id_int = int(str(pgm_id))
+        except (ValueError, TypeError):
+            raise JablotronError(f"Invalid PGM ID: {pgm_id}") from None
+        pgm_index = pgm_id_int + 1
         state_name = f"PGM_{pgm_index}"
-        uid = f"{state_name}_prehled"
+        uid = f"{state_name}{UID_SUFFIX}"
 
         payload_data = {
             "section": state_name,
@@ -435,7 +467,7 @@ class JablotronClient:
             "uid": uid,
         }
 
-        _LOGGER.debug(f"Controlling {state_name}: status={status}")
+        _LOGGER.debug("Controlling %s: status=%s", state_name, status)
 
 
         # Control endpoint doesn't use the "status" field in JSON, so we don't validate it
@@ -446,21 +478,21 @@ class JablotronClient:
 
         try:
             data = json.loads(text)
-            _LOGGER.debug(f"Control response: {data}")
+            _LOGGER.debug("Control response: %s", data)
 
             # Check for PGM-specific errors in response
             if "authorization" in data and data["authorization"] != 200:
-                _LOGGER.error(f"PGM control authorization failed: {data}")
+                _LOGGER.error("PGM control authorization failed: %s", data)
                 raise JablotronSessionError(f"Authorization failed: {data['authorization']}")
 
             if "responseCode" in data and data["responseCode"] != 200:
-                _LOGGER.error(f"PGM control failed with response code: {data}")
+                _LOGGER.error("PGM control failed with response code: %s", data)
                 raise JablotronSessionError(f"Response code: {data['responseCode']}")
 
             return data
 
         except json.JSONDecodeError as e:
-            _LOGGER.error(f"Invalid JSON from control API: {text[:200]}")
+            _LOGGER.error("Invalid JSON from control API: %s", text[:200])
             raise JablotronSessionError("Invalid control response") from e
 
     async def async_close(self):

@@ -1,15 +1,16 @@
 """Switch platform for Jablotron Web."""
 import logging
 import time
-from typing import Any, Dict
+from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, PGM_SWITCHABLE_REACTIONS
+from .const import DOMAIN, CONF_PGM_CODE, PGM_REACTION_PULSE, PGM_SWITCHABLE_REACTIONS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ async def async_setup_entry(
     switches = []
 
     # Check if PGM code is configured - switches require it for control
-    pgm_code = entry.data.get("pgm_code", "")
+    pgm_code = entry.data.get(CONF_PGM_CODE, "")
     if not pgm_code or not pgm_code.strip():
         _LOGGER.info("PGM control code not configured - switches will not be created. Configure PGM code in integration options to enable PGM switching.")
         async_add_entities(switches)
@@ -36,8 +37,6 @@ async def async_setup_entry(
     if coordinator.data and "pgm" in coordinator.data:
         # Check if the user has permissions to control PGMs
         permissions = coordinator.data.get("permissions", {})
-        
-        _LOGGER.info(f"Evaluating {len(coordinator.data['pgm'])} PGMs for switch creation (PGM code configured)")
 
         for pgm_id, pgm_data in coordinator.data["pgm"].items():
             # Only create a switch if:
@@ -49,9 +48,8 @@ async def async_setup_entry(
             has_permission = permissions.get(state_name, 0) == 1
             pgm_name = pgm_data.get("nazev", f"PGM {pgm_id}")
 
-            _LOGGER.debug(f"PGM {pgm_id} ({pgm_name}): reaction={reaction}, permission={has_permission}, switchable={reaction in PGM_SWITCHABLE_REACTIONS}")
-
             if reaction in PGM_SWITCHABLE_REACTIONS and has_permission:
+                _LOGGER.debug("Creating switch for PGM %s (%s, reaction: %s)", pgm_id, pgm_name, reaction)
                 switches.append(
                     JablotronPGMSwitch(
                         coordinator,
@@ -59,15 +57,17 @@ async def async_setup_entry(
                         entry.entry_id,
                         pgm_id,
                         pgm_name,
+                        # A pulse output must not be re-fired if the command
+                        # has to be retried after a session recovery
+                        is_idempotent=reaction != PGM_REACTION_PULSE,
                     )
                 )
-                _LOGGER.info(f"✅ CREATING SWITCH for PGM {pgm_id}: {pgm_name} (reaction: {reaction})")
-            elif reaction in PGM_SWITCHABLE_REACTIONS and not has_permission:
-                _LOGGER.info(f"⏭ SKIPPING PGM {pgm_id} ({pgm_name}) - switchable but no permission")
+            elif reaction in PGM_SWITCHABLE_REACTIONS:
+                _LOGGER.debug("Skipping PGM %s (%s) - switchable but no permission", pgm_id, pgm_name)
             else:
-                _LOGGER.debug(f"⏭ SKIPPING PGM {pgm_id} ({pgm_name}) - not switchable (reaction: {reaction})")
+                _LOGGER.debug("Skipping PGM %s (%s) - not switchable (reaction: %s)", pgm_id, pgm_name, reaction)
 
-    _LOGGER.info(f"Created {len(switches)} switch(es) for PGMs")
+    _LOGGER.info("Created %d switch(es) for PGMs", len(switches))
     async_add_entities(switches)
 
 
@@ -81,6 +81,7 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
         entry_id: str,
         pgm_id: str,
         pgm_name: str,
+        is_idempotent: bool = True,
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator)
@@ -88,7 +89,17 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
         self._pgm_id = pgm_id
         self._attr_name = f"Jablotron {pgm_name}"
         self._attr_unique_id = f"{entry_id}_pgm_switch_{pgm_id}"
+        self._entry_id = entry_id
+        self._is_idempotent = is_idempotent
         self._optimistic_state: bool | None = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -122,66 +133,37 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
         Args:
             turn_on: True to turn on, False to turn off
         """
-        previous_state = self.is_on
         action = "on" if turn_on else "off"
         command = 1 if turn_on else 0
 
         try:
             # Set optimistic state immediately to freeze the switch during the operation
-            # This prevents coordinator updates from changing the state while we're switching
             self._optimistic_state = turn_on
             self.async_write_ha_state()
 
-            _LOGGER.debug(f"Turning {action} PGM {self._pgm_id}, state frozen during operation")
-            response = await self._client.control_pgm(self._pgm_id, command)
-            _LOGGER.info(f"PGM {self._pgm_id} control response: {response}")
+            _LOGGER.debug("Turning %s PGM %s, state frozen during operation", action, self._pgm_id)
+            response = await self._client.control_pgm(
+                self._pgm_id, command, retry_on_relogin=self._is_idempotent
+            )
+            _LOGGER.info("PGM %s control response: %s", self._pgm_id, response)
 
-            # Process the response and update coordinator data immediately
-            # Response format: {"ts": 123, "id": "PGM_7", "authorization": 200, "result": 0/1, "responseCode": 200}
-            if response and "result" in response and self.coordinator.data:
-                new_state = response.get("result")
-                if isinstance(new_state, int) and new_state in (0, 1):
-                    # Update the coordinator's data with the fresh state from the response
-                    _LOGGER.debug(f"Updating coordinator data with response state: {new_state} for PGM {self._pgm_id}")
-                    if "pgm" not in self.coordinator.data:
-                        self.coordinator.data["pgm"] = {}
-                    if self._pgm_id not in self.coordinator.data["pgm"]:
-                        self.coordinator.data["pgm"][self._pgm_id] = {}
-
-                    # Update the state in coordinator data
-                    self.coordinator.data["pgm"][self._pgm_id]["stav"] = new_state
-                    self.coordinator.data["pgm"][self._pgm_id]["ts"] = response.get("ts", int(time.time()))
-
-                    # Clear optimistic state BEFORE triggering update so this switch can process it
-                    self._optimistic_state = None
-
-                    # Trigger coordinator update to notify all listeners (including this switch)
-                    self.coordinator.async_set_updated_data(self.coordinator.data)
-                    _LOGGER.debug(f"Coordinator data updated, state unfrozen for PGM {self._pgm_id}")
-                else:
-                    # Invalid response, clear optimistic state
-                    _LOGGER.warning(f"Invalid result in response: {new_state}")
-                    self._optimistic_state = None
-            else:
-                # No valid response, clear optimistic state
-                _LOGGER.warning(f"No valid response data for PGM {self._pgm_id}")
-                self._optimistic_state = None
-
-            # Request a full refresh to get all updated data (for other sensors, etc.)
-            # This also ensures we have the latest state from the server
-            await self.coordinator.async_request_refresh()
-
-            # State should already be cleared above, but ensure it's None
-            self._optimistic_state = None
-            self.async_write_ha_state()
+            # Cache the reported result so the state is correct even before
+            # the next coordinator poll
+            new_state = response.get("result") if response else None
+            if not isinstance(new_state, int) or new_state not in (0, 1):
+                _LOGGER.warning("Invalid result in PGM %s response: %r", self._pgm_id, new_state)
+            elif not self.coordinator.set_pgm_state(
+                self._pgm_id, new_state, response.get("ts") or int(time.time())
+            ):
+                _LOGGER.warning("Could not cache PGM %s state after control", self._pgm_id)
         except Exception as err:
-            _LOGGER.error(f"Failed to turn {action} PGM {self._pgm_id}: {err}")
-            # Revert to previous state on failure
-            self._optimistic_state = previous_state
-            self.async_write_ha_state()
-            # Clear optimistic state after a moment
+            _LOGGER.error("Failed to turn %s PGM %s: %s", action, self._pgm_id, err, exc_info=True)
+        finally:
+            # Unfreeze: the state reported by coordinator data applies again
             self._optimistic_state = None
-            raise
+            self.async_write_ha_state()
+            # Reconcile with the actual device state
+            await self.coordinator.async_request_refresh()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
@@ -192,7 +174,7 @@ class JablotronPGMSwitch(CoordinatorEntity, SwitchEntity):
         await self._async_control_pgm(turn_on=False)
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if (
             self.coordinator.data

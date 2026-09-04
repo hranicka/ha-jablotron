@@ -39,6 +39,10 @@
           "retry_delay": "Prodleva při opakování po síťové chybě (sekundy)"
         }
       }
+    },
+    "error": {
+      "invalid_auth_new": "Nové přihlašovací údaje jsou neplatné. Zkontrolujte prosím e-mail a heslo.",
+      "cannot_connect": "Nepodařilo se připojit k Jablotron Cloud"
     }
   }
 }

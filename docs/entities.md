@@ -40,7 +40,7 @@ A single entity showing when the next periodic update will occur:
 | Unique ID | `{entry_id}_next_update` |
 | Icon | `mdi:update` |
 
-**Value source**: `last_update_time + coordinator.update_interval` — computed from the stored timestamp.
+**Value source**: `coordinator.last_updated + coordinator.update_interval` — computed from the timestamp of the last successful update.
 
 **Attributes**:
 - `last_update` — ISO format of last successful update
@@ -49,7 +49,7 @@ A single entity showing when the next periodic update will occur:
 - `seconds_until_next_update` / `minutes_until_next_update` — countdown
 - `last_update_success` — boolean (coordinator state)
 
-**Availability**: Only available if `last_update_time` is set (i.e., at least one successful update has occurred).
+**Availability**: Only available once at least one successful update has occurred (the coordinator's `last_updated` timestamp is set).
 
 ---
 
@@ -157,9 +157,9 @@ All three conditions must be met. If any fails, the PGM appears as a binary sens
 
 **Control flow**:
 1. `async_turn_on()` or `async_turn_off()` calls `_async_control_pgm(turn_on=True/False)`
-2. Sets optimistic state, calls `client.control_pgm(pgm_id, command)` with status 0 or 1
-3. On success: reads `response["result"]`, updates `coordinator.data["pgm"][pgm_id]["stav"]` directly
-4. Clears optimistic state, triggers coordinator update via `async_set_updated_data()` and `async_request_refresh()`
+2. Sets optimistic state, calls `client.control_pgm(pgm_id, command)` with status 0 or 1 (`retry_on_relogin=False` for pulse PGMs, so a session recovery never fires the command twice)
+3. On success: reads `response["result"]`, updates the cached state via `coordinator.set_pgm_state()`
+4. Clears optimistic state and triggers `coordinator.async_request_refresh()` to reconcile with the cloud
 5. On failure: reverts to previous optimistic state
 
 **Attributes**: Same as PGM binary sensors (`pgm_id`, `nazev`, `stav`, `state_name`, `reaction`, timing info).

@@ -39,6 +39,10 @@
           "retry_delay": "Retry delay after network errors (seconds)"
         }
       }
+    },
+    "error": {
+      "invalid_auth_new": "New credentials are invalid. Please check your email and password.",
+      "cannot_connect": "Failed to connect to Jablotron Cloud"
     }
   }
 }

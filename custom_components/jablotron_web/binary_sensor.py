@@ -1,6 +1,6 @@
 """Binary sensor platform for Jablotron Web."""
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -8,10 +8,11 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, PGM_SWITCHABLE_REACTIONS
+from .const import DOMAIN, CONF_PGM_CODE, PGM_SWITCHABLE_REACTIONS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ async def async_setup_entry(
     binary_sensors = []
 
     # Check if PGM code is configured - affects which PGMs become binary sensors vs switches
-    pgm_code = entry.data.get("pgm_code", "")
+    pgm_code = entry.data.get(CONF_PGM_CODE, "")
     has_pgm_code = bool(pgm_code and pgm_code.strip())
 
     if has_pgm_code:
@@ -53,7 +54,8 @@ async def async_setup_entry(
         if "pgm" in coordinator.data:
             permissions = coordinator.data.get("permissions", {})
 
-            _LOGGER.info(f"Evaluating {len(coordinator.data['pgm'])} PGMs for binary sensor creation (PGM code {'configured' if has_pgm_code else 'NOT configured'})")
+            _LOGGER.debug("Evaluating %d PGMs for binary sensor creation (PGM code %s)",
+                          len(coordinator.data["pgm"]), "configured" if has_pgm_code else "NOT configured")
 
             for pgm_id, pgm_data in coordinator.data["pgm"].items():
                 reaction = pgm_data.get("reaction", "")
@@ -69,10 +71,12 @@ async def async_setup_entry(
                 will_be_switch = has_pgm_code and is_switchable and has_permission
 
                 if will_be_switch:
-                    _LOGGER.debug(f"Skipping binary sensor for PGM {pgm_id} ({pgm_data.get('nazev')}) - will be created as switch instead (reaction: {reaction}, permission: {has_permission})")
+                    _LOGGER.debug("Skipping binary sensor for PGM %s (%s) - will be created as switch instead (reaction: %s, permission: %s)",
+                                  pgm_id, pgm_data.get("nazev"), reaction, has_permission)
                     continue
 
-                _LOGGER.debug(f"Creating binary sensor for PGM {pgm_id} ({pgm_data.get('nazev')}) - reaction: {reaction}, switchable: {is_switchable}, permission: {has_permission}, has_code: {has_pgm_code}")
+                _LOGGER.debug("Creating binary sensor for PGM %s (%s) - reaction: %s, switchable: %s, permission: %s, has_code: %s",
+                              pgm_id, pgm_data.get("nazev"), reaction, is_switchable, has_permission, has_pgm_code)
                 binary_sensors.append(
                     JablotronPGMBinarySensor(
                         coordinator,
@@ -96,7 +100,7 @@ async def async_setup_entry(
 
     # Count PGM binary sensors
     pgm_binary_count = sum(1 for sensor in binary_sensors if isinstance(sensor, JablotronPGMBinarySensor))
-    _LOGGER.info(f"Created {pgm_binary_count} PGM binary sensor(s), {len(binary_sensors)} total binary sensors")
+    _LOGGER.debug("Created %d PGM binary sensor(s), %d total binary sensors", pgm_binary_count, len(binary_sensors))
     async_add_entities(binary_sensors)
 
 
@@ -117,6 +121,15 @@ class JablotronSectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._section_id = section_id
         self._attr_name = f"Jablotron {section_name}"
         self._attr_unique_id = f"{entry_id}_section_{section_id}"
+        self._entry_id = entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
 
     @property
     def is_on(self) -> bool | None:
@@ -134,7 +147,7 @@ class JablotronSectionBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return None
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if (
             self.coordinator.data
@@ -170,6 +183,7 @@ class JablotronPGMBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._pgm_id = pgm_id
         self._attr_name = f"Jablotron {pgm_name}"
         self._attr_unique_id = f"{entry_id}_pgm_{pgm_id}"
+        self._entry_id = entry_id
 
         # Determine device class based on name keywords
         name_lower = pgm_name.lower()
@@ -187,6 +201,14 @@ class JablotronPGMBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self._attr_device_class = BinarySensorDeviceClass.POWER
 
     @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
+
+    @property
     def is_on(self) -> bool | None:
         """Return true if the binary sensor is on."""
         if (
@@ -202,7 +224,7 @@ class JablotronPGMBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return None
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if (
             self.coordinator.data
@@ -242,6 +264,15 @@ class JablotronPIRBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._pir_id = pir_id
         self._attr_name = f"Jablotron {pir_name}"
         self._attr_unique_id = f"{entry_id}_pir_{pir_id}"
+        self._entry_id = entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
 
     @property
     def is_on(self) -> bool | None:
@@ -259,7 +290,7 @@ class JablotronPIRBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return None
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if (
             self.coordinator.data

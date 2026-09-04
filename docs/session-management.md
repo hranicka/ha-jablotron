@@ -30,14 +30,16 @@ The most common failure — session expires (HTTP status 300 from API) while the
 
 **Detection**: `stav.php` returns `{"status": 300}` → `_http_json()` raises `JablotronSessionError`.
 
-**Recovery flow** (inside `__with_session_handling()`):
+**Recovery flow** (inside `_with_session_handling()`):
 1. Catch `JablotronSessionError` from API call
 2. Call `_reset_session()` — clears cookies, closes session, sets to None
 3. Attempt re-login immediately (no delay)
-4. If re-login succeeds → retry the original API call
+4. If re-login succeeds → retry the original API call (skipped for non-idempotent PGM commands, see below)
 5. Return data on success
 
 **Recovery time**: 2–5 seconds (two requests: re-login + retry).
+
+**Non-idempotent commands**: `control_pgm()` accepts `retry_on_relogin=False`. Switches for `pgorPulse` PGMs pass it — if the session expired while a pulse command was in flight, the command is *not* re-sent after recovery (it may already have executed), and a `JablotronSessionError` is raised instead so the switch can reconcile via the next status poll.
 
 ## Delayed Recovery (Retry Backoff)
 
@@ -45,7 +47,7 @@ When **re-login itself fails** (e.g., credentials are invalid, network is down, 
 
 **Flow**:
 1. Catch `JablotronSessionError` from original API call → attempt re-login
-2. Re-login also fails with `JablotronAuthError` or `JablotronNetworkError`
+2. Re-login fails (wrong credentials, network down, API unreachable — any error)
 3. Set `_next_retry_time = now + retry_delay` (default 300 seconds / 5 minutes)
 4. Raise error up to coordinator
 
@@ -60,15 +62,18 @@ When **re-login itself fails** (e.g., credentials are invalid, network is down, 
 2. Clears the timer call `client.reset_session_and_clear_retry()` → full session reset
 3. Proceeds with normal API call and recovery flow
 
-## Network Error During Initial Login
+## Initial Login Failure
 
-If the very first login fails (coordinator's first refresh):
+If the very first login fails (coordinator's first refresh or config flow validation):
 
 1. `_with_session_handling()` catches the error during initial login
 2. Sets retry delay immediately: `_next_retry_time = now + retry_delay`
-3. Raises `JablotronAuthError` → coordinator raises `ConfigEntryAuthFailed`
-4. Home Assistant shows authentication error for the entity but does not trigger reauth flow (initial login is part of setup, not a runtime update)
+3. Raises `JablotronSessionError` → coordinator raises `UpdateFailed`
+4. Home Assistant shows the entities as unavailable; no reauth flow is triggered
 5. Subsequent coordinator polls hit the delay check and skip
+
+If the initial login fails with `JablotronAuthError` (invalid credentials), the
+coordinator raises `ConfigEntryAuthFailed` instead, which triggers the reauth flow.
 
 ## Error Scenarios Summary
 
@@ -77,7 +82,8 @@ If the very first login fails (coordinator's first refresh):
 | Session expired mid-poll | API returns `status: 300` | Re-login + immediate retry | None (2-5s) | Entities stay available |
 | Re-login fails | Credentials invalid, network down | Set retry delay | Configurable (default 5 min) | "Unavailable" |
 | Network error on status fetch | Timeout, DNS failure | Wrapped as session error → re-login trigger | If re-login succeeds: none; if fails: delay | Depends |
-| Initial login fails | Wrong credentials at setup | Retry delay set for recovery attempts | Configurable | Error in UI |
+| Initial login fails (network) | Network/API down at setup | Retry delay set for recovery attempts | Configurable | "Unavailable" |
+| Initial login fails (credentials) | Wrong username/password at setup | None — auth error propagates | — | Reauth flow |
 
 ## Reset Session
 
@@ -114,7 +120,7 @@ logger:
 4. `"No session found, performing initial login"` — on first API call or after reset
 5. `"Attempting immediate re-login after session error"` — recovery attempted
 6. `"Re-login successful, retrying API call"` — recovery succeeded
-7. `"Re-login failed after session error. Will retry in X minutes."` — recovery failed, delay set
+7. `"Re-login failed after session error: ..."` — recovery failed, delay set
 8. `"Waiting for retry delay to expire: Xm Ys remaining"` — skipping update during delay
 
 ## Test Script

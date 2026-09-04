@@ -81,9 +81,8 @@ During runtime, `hass.data["jablotron_web"][entry_id]` holds:
 
 ```python
 {
-    "coordinator": DataUpdateCoordinator,
+    "coordinator": DataUpdateCoordinator,  # .last_updated = Unix timestamp of latest successful update
     "client": JablotronClient,
-    "last_update_time": float | None  # Unix timestamp of latest successful update
 }
 ```
 
@@ -115,7 +114,7 @@ Metadata in `hacs.json`:
   "name": "Jablotron Web",
   "render_readme": true,
   "filename": "jablotron_web.zip",
-  "homeassistant": "2024.1.0",
+  "homeassistant": "2025.12.0",
   "content_in_root": false
 }
 ```

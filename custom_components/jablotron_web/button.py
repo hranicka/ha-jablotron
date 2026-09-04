@@ -6,6 +6,7 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 
@@ -38,11 +39,21 @@ class JablotronUpdateButton(CoordinatorEntity, ButtonEntity):
     @property
     def available(self) -> bool:
         """Return if the entity is available."""
-        # Button is always available so users can trigger updates even when the coordinator has errors
+        # Always available so users can trigger updates even when the
+        # coordinator has errors — that is exactly when it is needed
         return True
 
     async def async_press(self) -> None:
         """Handle the button press."""
         _LOGGER.info("Force updating Jablotron data via button press")
+        # async_request_refresh logs update failures itself; nothing to raise here
         await self.coordinator.async_request_refresh()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
 

@@ -1,7 +1,6 @@
 import logging
-from typing import Any, Dict
+from typing import Any
 from datetime import datetime
-from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -11,8 +10,10 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, CONF_SENSOR_NAMES
 
@@ -30,7 +31,7 @@ async def async_setup_entry(
     # Get custom sensor names from config
     sensor_names = entry.data.get(CONF_SENSOR_NAMES, {})
 
-    sensors = [JablotronNextUpdateSensor(coordinator, entry.entry_id, hass)]
+    sensors = [JablotronNextUpdateSensor(coordinator, entry.entry_id)]
 
     # Get initial data to determine available sensors
     if coordinator.data and "teplomery" in coordinator.data:
@@ -68,6 +69,15 @@ class JablotronTemperatureSensor(CoordinatorEntity, SensorEntity):
         self._sensor_id = sensor_id
         self._attr_name = f"Jablotron {sensor_name}"
         self._attr_unique_id = f"{entry_id}_teplomer_{sensor_id}"
+        self._entry_id = entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
 
     @property
     def native_value(self) -> float | None:
@@ -84,7 +94,7 @@ class JablotronTemperatureSensor(CoordinatorEntity, SensorEntity):
         return None
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if (
             self.coordinator.data
@@ -107,24 +117,18 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
-    def __init__(self, coordinator, entry_id: str, hass: HomeAssistant):
+    def __init__(self, coordinator, entry_id: str):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._attr_name = "Jablotron Next Update"
         self._attr_unique_id = f"{entry_id}_next_update"
         self._attr_icon = "mdi:update"
         self._entry_id = entry_id
-        self._hass = hass
 
     def _get_last_update_timestamp(self) -> float | None:
-        """Get the last update timestamp from hass.data."""
-        if (
-            DOMAIN in self._hass.data
-            and self._entry_id in self._hass.data[DOMAIN]
-            and "last_update_time" in self._hass.data[DOMAIN][self._entry_id]
-        ):
-            return self._hass.data[DOMAIN][self._entry_id]["last_update_time"]
-        return None
+        """Get the last update timestamp from the coordinator."""
+        # Set by JablotronDataCoordinator on every successful refresh
+        return self.coordinator.last_updated
 
     @property
     def available(self) -> bool:
@@ -142,7 +146,7 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
         return last_update_dt + self.coordinator.update_interval
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         timestamp = self._get_last_update_timestamp()
         if timestamp is None:
@@ -166,5 +170,13 @@ class JablotronNextUpdateSensor(CoordinatorEntity, SensorEntity):
             "minutes_until_next_update": max(0, seconds_until_next // 60),
             "last_update_success": self.coordinator.last_update_success,
         }
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"hub_{self._entry_id}")},
+            name="Jablotron Alarm",
+            manufacturer="Jablotron",
+        )
 
 
