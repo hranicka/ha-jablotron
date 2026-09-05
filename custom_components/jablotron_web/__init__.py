@@ -155,7 +155,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise
 
     # Register services with race condition protection
-    if not hass.services.async_has_service(DOMAIN, SERVICE_RELOAD):
+    # (has_service is a sync callback — async_has_service does not exist)
+    if not hass.services.has_service(DOMAIN, SERVICE_RELOAD):
         await services.async_setup_services(hass)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
