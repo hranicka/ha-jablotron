@@ -1,18 +1,24 @@
 # Jablotron Web Integration for Home Assistant
 
-Full-featured Home Assistant integration for Jablotron JA-100 alarm systems via the [jablonet.net](https://www.jablonet.net) cloud API.
+Full-featured Home Assistant integration for Jablotron JA-100 alarm systems via the MyJABLOTRON mobile API (`api.jablonet.net`).
+
+> **v0.1.0 — API migration**: the old `www.jablonet.net` web API is closed to
+> non-browser clients (Jablotron added bot protection and reCAPTCHA to the
+> web login in 2026). The integration now uses the same API as the official
+> MyJABLOTRON mobile app. Credentials and configuration are unchanged; PIR
+> motion sensors are temporarily unavailable (the mobile API does not expose
+> them — see [docs/entities.md](docs/entities.md)).
 
 ## Features
 
-- Automatic session management with 4-step browser-like authentication
+- Automatic session management against the mobile API v2.2
 - Auto re-login on session expiration (no user intervention needed)
 - Reauth flow support when credentials change
 - Temperature sensors with customizable names
 - Alarm sections as binary sensors (armed/disarmed state)
 - PGM outputs — read-only binary sensors or controllable switches
-- PIR motion sensors
 - PGM switching (requires a 4-digit control PIN code)
-- Multi-device / multi-service support via `service_id`
+- Multi-device / multi-service support via `service_id` (auto-discovery)
 - Configurable polling interval, request timeout, and retry backoff
 - Countdown timer tracking next data update
 - Manual force-update button entity

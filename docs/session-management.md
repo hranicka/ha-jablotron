@@ -18,24 +18,25 @@ Occurs during initial setup (config flow validation) or during automatic login.
 **Causes**: Wrong username/password, network unreachable, API down.
 
 **Flow**:
-1. `login()` calls `_visit_homepage()` → `_login_post()` → `_get_cloud_page()` → `_get_ja100_app()` sequentially
-2. On `JablotronAuthError`: re-raised as-is (from config flow shows error to user, from coordinator raises `ConfigEntryAuthFailed` → triggers HA reauth flow)
+1. `login()` POSTs the credentials to `userAuthorize.json` on `api.jablonet.net`
+2. On `JablotronAuthError` (HTTP 401 / `USER.LOGIN.INVALID-CREDENTIALS`): re-raised as-is (from config flow shows error to user, from coordinator raises `ConfigEntryAuthFailed` → triggers HA reauth flow)
 3. On `JablotronSessionError` or `JablotronNetworkError`: wrapped in session error with context
 
 **Config flow result**: Error displayed in UI ("Cannot connect" or "Invalid authentication credentials").
 
 ## Normal Session Recovery (No Delay)
 
-The most common failure — session expires (HTTP status 300 from API) while the coordinator is polling.
+The most common failure — the API session expires while the coordinator is polling.
 
-**Detection**: `stav.php` returns `{"status": 300}` → `_http_json()` raises `JablotronSessionError`.
+**Detection**: `dataUpdate.json` (or any data/control call) returns HTTP 401 with `USER.SESSION.EXPIRED` → the client raises `JablotronSessionError`.
 
 **Recovery flow** (inside `_with_session_handling()`):
 1. Catch `JablotronSessionError` from API call
 2. Call `_reset_session()` — clears cookies, closes session, sets to None
 3. Attempt re-login immediately (no delay)
 4. If re-login succeeds → retry the original API call (skipped for non-idempotent PGM commands, see below)
-5. Return data on success
+5. If the retried API call fails again with a session error (sticky expiry) → arm the retry delay
+6. Return data on success
 
 **Recovery time**: 2–5 seconds (two requests: re-login + retry).
 
@@ -43,11 +44,11 @@ The most common failure — session expires (HTTP status 300 from API) while the
 
 ## Delayed Recovery (Retry Backoff)
 
-When **re-login itself fails** (e.g., credentials are invalid, network is down, or API is unreachable).
+When **re-login itself fails** (e.g., credentials are invalid, network is down, or API is unreachable), or when the API keeps failing after a successful re-login.
 
 **Flow**:
 1. Catch `JablotronSessionError` from original API call → attempt re-login
-2. Re-login fails (wrong credentials, network down, API unreachable — any error)
+2. Re-login fails (wrong credentials, network down, API unreachable — any error), *or* the retried API call fails again
 3. Set `_next_retry_time = now + retry_delay` (default 300 seconds / 5 minutes)
 4. Raise error up to coordinator
 
@@ -79,8 +80,9 @@ coordinator raises `ConfigEntryAuthFailed` instead, which triggers the reauth fl
 
 | Scenario | Trigger | Recovery mechanism | Delay | UI state |
 |----------|---------|-------------------|-------|----------|
-| Session expired mid-poll | API returns `status: 300` | Re-login + immediate retry | None (2-5s) | Entities stay available |
+| Session expired mid-poll | API returns HTTP 401 / `USER.SESSION.EXPIRED` | Re-login + immediate retry | None (2-5s) | Entities stay available |
 | Re-login fails | Credentials invalid, network down | Set retry delay | Configurable (default 5 min) | "Unavailable" |
+| API fails again after re-login | Sticky server-side expiry | Set retry delay | Configurable | "Unavailable" |
 | Network error on status fetch | Timeout, DNS failure | Wrapped as session error → re-login trigger | If re-login succeeds: none; if fails: delay | Depends |
 | Initial login fails (network) | Network/API down at setup | Retry delay set for recovery attempts | Configurable | "Unavailable" |
 | Initial login fails (credentials) | Wrong username/password at setup | None — auth error propagates | — | Reauth flow |
@@ -92,7 +94,7 @@ Called in two places:
 1. **On every `JablotronSessionError`** from an API call (automatic recovery)
 2. **When retry delay expires** (`reset_session_and_clear_retry()`), called by coordinator to clear cached state before retrying
 
-Implementation clears the cookie jar, closes the aiohttp session, and sets `self.session = None`. Next request creates a fresh session.
+Implementation clears the cookie jar, closes the aiohttp session, and sets `self.session = None`. Next request creates a fresh session. On integration unload the client logs out (`logout.json`) before closing the session.
 
 ## Configuration Constants (from `const.py`)
 
@@ -114,21 +116,21 @@ logger:
 
 **Key log messages** (chronological order during normal operation):
 
-1. `"Performing full login to Jablotron Cloud"` — login started
-2. `"[Step N]: ..." ` — each of the four login steps
-3. `"Login successful - all cookies obtained"` — 4-step login complete
-4. `"No session found, performing initial login"` — on first API call or after reset
+1. `"Performing login to the MyJABLOTRON API (api.jablonet.net)"` — login started
+2. `"Login successful - API session established"` — session cookie obtained
+3. `"No session found, performing initial login"` — on first API call or after reset
+4. `"Discovered JA-100 service ..."` — service auto-discovery (only when no service ID is configured)
 5. `"Attempting immediate re-login after session error"` — recovery attempted
-6. `"Re-login successful, retrying API call"` — recovery succeeded
-7. `"Re-login failed after session error: ..."` — recovery failed, delay set
+6. `"Re-login successful"` — recovery succeeded
+7. `"Re-login failed after session error: ..."` / `"API call failed again after re-login: ..."` — recovery failed, delay set
 8. `"Waiting for retry delay to expire: Xm Ys remaining"` — skipping update during delay
 
 ## Test Script
 
-A standalone script at `test_jablonet.py` replicates the full 4-step login flow and sensor data fetching for debugging:
+A standalone script at `test_jablonet.py` probes the v2.2 API with real credentials for debugging:
 
 ```bash
 python test_jablonet.py <username> <password> [service_id]
 ```
 
-Outputs HTTP status codes, cookie states per step, and parsed JSON for temperature sensors and PGM outputs. Uses its own `aiohttp.ClientSession` with `yarl.URL` for cookie filtering — no Home Assistant dependency.
+Performs login, lists account services, dumps the raw `dataUpdate.json` response, probes for extra data types (e.g. PIR), and prints the legacy-shaped dict the integration builds from it. It never triggers control calls.

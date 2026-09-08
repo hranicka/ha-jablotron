@@ -12,10 +12,12 @@ The config flow runs when a user adds the `Jablotron Web` integration through Ho
 |-------|----------|-------------|
 | Email (username) | Yes | Jablotron account email address |
 | Password | Yes | Jablotron account password (stored encrypted by Home Assistant) |
-| Service ID | No | Specific service identifier for multi-service accounts (house, car, etc.) |
+| Service ID | No | Specific service identifier for multi-service accounts (house, car, etc.). When empty, the integration auto-discovers the first enabled JA-100 service on the account |
 | PGM Control Code | No | 4-digit PIN for controlling PGM outputs. If omitted, PGM switchable outputs appear as read-only binary sensors |
 
 On submit: credentials are tested by calling `client.login()`. If valid, `get_status()` is called to discover available temperature sensors.
+
+The integration talks to the MyJABLOTRON mobile API v2.2 (`api.jablonet.net`). The old web API on `www.jablonet.net` is closed to non-browser clients (see `docs/api-reference.md`).
 
 ### Step 2 — Sensor Naming (conditional)
 

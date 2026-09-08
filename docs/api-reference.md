@@ -1,261 +1,251 @@
-# Jablotron API Reference
+# Jablotron API Reference (MyJABLOTRON mobile API v2.2)
 
-All jablonet.net endpoints return HTTP 200 OK even when errors occur — error conditions are encoded in the JSON response body via a `status` field or specific error fields.
+The integration talks to the same API as the official MyJABLOTRON mobile app.
+The old web endpoints on `www.jablonet.net` are closed to non-browser clients
+since the 2026 web rework (TLS fingerprinting at nginx plus reCAPTCHA v2 on
+the `jip.jablotron.cloud` SSO login) and cannot be used programmatically.
+
+Unlike the old web API, this API returns proper HTTP status codes (401 for
+auth/session problems) with machine-readable error codes in the body.
 
 ## Base URL
 
 ```
-https://www.jablonet.net
+https://api.jablonet.net/api/2.2/
 ```
 
-## Authentication Flow (4-Step)
+## Authentication Flow (2 requests)
 
-The API uses cookie-based session authentication mimicking browser behavior. Four requests must complete in order:
-
-### Step 1: Get Initial Session Cookie
+### Step 1: Authorize
 
 ```
-GET https://www.jablonet.net
+POST https://api.jablonet.net/api/2.2/userAuthorize.json
+Content-Type: application/json
+
+{"login": "<email>", "password": "<password>"}
 ```
 
-**Purpose**: Obtain initial `PHPSESSID` cookie.
+**Response (success)**: HTTP 200 with `{"http-code": 200, ...}` and a
+`PHPSESSID` session cookie.
 
-**Headers**: `User-Agent`, `Accept` (text/html) — standard browser headers.
+**Response (failure)**: HTTP 401 with:
 
-**Response**: HTML page, Set-Cookie header with `PHPSESSID`.
+```json
+{"errors": [{"code": "USER.LOGIN.INVALID-CREDENTIALS", "message": "Invalid login information"}], "http-code": 401}
+```
 
----
+### Step 2 (implicit): Session cookie
 
-### Step 2: POST Credentials
+The `PHPSESSID` cookie alone authenticates all subsequent data/control calls.
+The client keeps it in an `aiohttp.CookieJar` for the lifetime of the session.
+
+> `accessTokenGet.json` (returns a Bearer token) exists for the GraphQL event
+> history API on `graph.jablotron.cloud` and is **not** used by this
+> integration.
+
+### Required headers (all requests)
+
+Imitating the mobile client is mandatory — the API validates vendor headers:
 
 ```
-POST https://www.jablonet.net/ajax/login.php
+User-Agent: net.jablonet/8.6.1.3887
+x-vendor-id: JABLOTRON:Jablotron
+x-client-version: MYJ-PUB-IOS-8.6.1.3887
+Accept: application/json
+Accept-Language: en
+```
+
+### Logout
+
+```
+POST https://api.jablonet.net/api/2.2/logout.json
 Content-Type: application/x-www-form-urlencoded
-X-Requested-With: XMLHttpRequest
-Origin: https://www.jablonet.net
-Referer: https://www.jablonet.net/
 
-login=<email>&heslo=<password>&aStatus=200&loginType=Login
+system=HomeAssistant
 ```
 
-**Purpose**: Authenticate user.
+Response body is ignored. Called best-effort on integration unload.
 
-**Cookies required**: `PHPSESSID` from Step 1.
-
-**Response**: 
-- HTTP 200 on success; error message in JSON body via `errorMessage` field
-- Set-Cookie with authenticated `PHPSESSID`
-
-**Error**: `{"errorMessage": "..."}` — wrong credentials.
-
----
-
-### Step 3: Get lastMode Cookie
+## Service List
 
 ```
-GET https://www.jablonet.net/cloud
-Referer: https://www.jablonet.net/
+POST https://api.jablonet.net/api/2.2/serviceListGet.json
+Content-Type: application/json
+
+{"list-type": "EXTENDED", "visibility": "VISIBLE"}
 ```
 
-**Purpose**: Obtain `lastMode` cookie for app access.
-
-**Cookies required**: Authenticated `PHPSESSID`.
-
-**Response**: HTML redirect page, Set-Cookie with `lastMode`.
-
----
-
-### Step 4: Initialize JA100 App Session
-
-```
-GET https://www.jablonet.net/app/ja100?service=<service_id>
-Referer: https://www.jablonet.net/cloud
-```
-
-**Purpose**: Finalize session for JA100 app API access.
-
-**Cookies required**: `PHPSESSID`, `lastMode`.
-
-**Response**: HTML application page. The `service` query parameter is optional but recommended when multiple services (house, car, etc.) are linked to the account.
-
----
-
-### Cookie Management
-
-The integration uses a dedicated `aiohttp.CookieJar()` per client instance:
-- Cookies persist across requests within the same session
-- Cookies are cleared entirely on every error via `_reset_session()`
-- The aiohttp session is recreated automatically on first use (`self.session is None`) and after errors
-
-### Session Lifetime
-
-Sessions expire after inactivity (typically 30–60 minutes). Expired sessions return `{"status": 300, "url": "..."}` on API calls.
-
-## State Retrieval API
-
-**Endpoint**: `POST https://www.jablonet.net/app/ja100/ajax/stav.php`
-
-**Purpose**: Get the full current state of all system components (sections, PGMs, temperature sensors, PIR sensors, permissions, alarms, troubles).
-
-### Request Headers
-
-```
-User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0
-Accept: application/json, text/javascript, */*; q=0.01
-Content-Type: application/x-www-form-urlencoded
-X-Requested-With: XMLHttpRequest
-Origin: https://www.jablonet.net
-Referer: https://www.jablonet.net/app/ja100?service=<service_id>
-Cookie: PHPSESSID=<...>; lastMode=<...>
-```
-
-### Request Body
-
-```
-activeTab=heat
-```
-
-The `activeTab` parameter specifies the web app tab context. Use `heat` for full data including temperature sensors and PGMs. Optional `service_id` query param can be appended: `activeTab=heat&service_id=<id>`.
-
-### Successful Response (HTTP 200, status field = 200)
+**Response**:
 
 ```json
 {
-  "status": 200,
-  "sekce": {
-    "0": { "stav": 0, "nazev": "Vše", "stateName": "STATE_1", "time": "30.11.2025 - 14:34", "active": 1 },
-    "4": { "stav": 1, "nazev": "Garáž", "stateName": "STATE_5", "time": "30.10.2025 - 08:54", "active": 1 }
-  },
-  "pgm": {
-    "6": { "stav": 0, "nazev": "Osvětlení", "stateName": "PGM_7", "ts": 1764068252, "reaction": "pgorSwitchOnOff", "time": "today - 11:57", "active": 1 },
-    "15": { "stav": 0, "nazev": "Vrata", "stateName": "PGM_16", "ts": 1763300203, "reaction": "pgorPulse", "time": "16.11.2025 - 14:36", "active": 1 }
-  },
-  "teplomery": {
-    "040": { "stateName": "HEAT_40", "value": 1.3, "ts": 1764069354 },
-    "046": { "stateName": "HEAT_46", "value": 40.8, "ts": 1764069379 }
-  },
-  "pir": {
-    "5": { "stateName": "PPIR_6790289", "nazev": "PIR Chodba", "active": 0, "last_pic": -1, "type": "JA-160PC" },
-    "6": { "stateName": "PPIR_6790397", "nazev": "PIR Vstup", "active": 1, "last_pic": -1, "type": "JA-120PC" }
-  },
-  "permissions": {
-    "PGM_7": 1,
-    "STATE_1": 1
-  },
-  "troubles": [
-    { "type": "TROUBLE", "message": "Periphery battery low - Periphery Teplota venku", "date": "22.11.2025 04:32" }
-  ],
-  "alarms": [],
-  "tampers": [],
-  "service": 0,
-  "tz": "Europe/Prague",
-  "prava": 0,
-  "timeStamp": 1764069529
+  "http-code": 200,
+  "data": {
+    "services": [
+      {"service-id": 123456, "name": "Home", "status": "ENABLED",
+       "service-type": "JA100", "warning": "", "warning-time": ""}
+    ]
+  }
 }
 ```
 
-**Response fields**:
+`service-type` is `JA100`, `JA100F` or `OASIS` (matched case-insensitively).
+Only `JA100` is supported. If no `service_id` is configured, the integration
+picks the first enabled `JA100` service automatically.
 
-| Field | Description |
-|-------|-------------|
-| `status` | `200` = success, `300` = session expired |
-| `sekce` | Alarm sections — keys are section IDs |
-| `pgm` | Programmable outputs — keys are PGM IDs (offset by 1 from stateName) |
-| `teplomery` | Temperature sensors — keys are sensor IDs |
-| `pir` | PIR motion sensors — keys are PIR IDs |
-| `permissions` | User control permissions — key=stateName, value=`0`=no access, `1`=can control |
-| `troubles` | Active system troubles/warnings |
-| `alarms` | Recent alarm events |
-| `tampers` | Tamper events |
-| `timeStamp` | Server timestamp (Unix epoch) |
-| `tz` | Server timezone identifier |
+## State Retrieval
+
+```
+POST https://api.jablonet.net/api/2.2/dataUpdate.json
+Content-Type: application/x-www-form-urlencoded
+
+data=[{"filter_data":[{"data_type":"section"},{"data_type":"pgm"},{"data_type":"thermometer"},{"data_type":"thermostat"}],"service_type":"ja100","service_id":123456,"data_group":"serviceData"}]&system=HomeAssistant
+```
+
+(`data` is URL-encoded JSON; `system` is an arbitrary stable string.)
+
+**Successful response** (abbreviated):
+
+```json
+{
+  "status": true,
+  "data": {
+    "service_data": [
+      {
+        "service_id": "123456",
+        "data": [
+          {"data_type": "section", "data": {"segments": [
+            {"segment_id": "STATE_1", "segment_state": "unset", "segment_name": "Vše"}
+          ]}},
+          {"data_type": "pgm", "data": {"segments": [
+            {"segment_id": "PGM_7", "segment_state": "unset", "segment_name": "Osvětlení"}
+          ]}},
+          {"data_type": "thermometer", "data": {"segments": [
+            {"segment_id": "THERMOMETER_40", "segment_state": "set", "segment_name": "Venku",
+             "segment_informations": [{"value": 1.3, "type": "temperature"}]}
+          ]}}
+        ]
+      }
+    ]
+  }
+}
+```
 
 **Value semantics**:
 
-- `stav`: `0` = off/disarmed, `1` = on/armed
-- `active`: `1` = entity is available in the system
-- `active` in PIR: `0` = no motion, `1` = motion detected
-- `value` in temperature: numeric °C (float)
+- `segment_state`: `set` / `unset` / `partialSet` for sections, `set` /
+  `unset` for PGMs. Anything other than `unset` maps to legacy `stav: 1`.
+- `segment_informations[].value`: temperature in °C (first entry is used).
 
-### Error Response — Session Expired
+**Adapter**: the response is translated by `v22_adapter.py` into the legacy
+`stav.php`-shaped dict (`sekce`, `pgm`, `teplomery`, `pir`, `permissions`,
+`timeStamp`) that the platforms consume. See "ID Mapping" below.
 
-```json
-{ "status": 300, "url": "https://www.jablonet.net/app/ja100?service=" }
+### Session expired
+
+HTTP 401 with `{"errors": [{"code": "USER.SESSION.EXPIRED", ...}], "http-code": 401}` —
+triggers the automatic re-login + retry flow.
+
+### Known gaps vs. the old web API
+
+| Old (`stav.php`) | v2.2 (`dataUpdate.json`) | Consequence |
+|------------------|--------------------------|-------------|
+| `pir` (PIR motion sensors) | no data_type returns it (probed pir/peripheral/device/camera/window — all empty) | PIR binary sensors are absent; no workaround known |
+| `reaction` per PGM (`pgorSwitchOnOff`/`pgorPulse`) | not reported | all PGMs default to bistable behavior |
+| `permissions` per stateName | replaced by real flags: per-segment `segment_is_controllable` + account-level `service_permissions.controls_pgs` / `service_readonly` | a PGM becomes a switch when it is flagged controllable and a PGM code is configured |
+| thermometer values | stale `"unknown"` cache in dataUpdate; live values via `thermoDevicesGet.json` (see above) | solved — sensors carry live values + `last-temperature-time` as `ts` |
+| per-item `ts`/`time` timestamps | thermometers: `last-temperature-time`; sections/PGMs: none | PGM/section timestamp attributes absent |
+
+## Thermo Devices (live temperature source)
+
+`dataUpdate.json`'s thermometer segments only carry a **stale cache** (the
+string `"unknown"` for online peripheries). Live readings come from the
+per-alarm endpoint family instead:
+
+```
+POST https://api.jablonet.net/api/2.2/JA100/thermoDevicesGet.json
+Content-Type: application/json
+
+{"connect-device": false, "list-type": "FULL", "service-id": 70537, "service-states": true}
 ```
 
-Detected by `_http_json()` which raises `JablotronSessionError`. Triggers automatic re-login.
+(`connect-device: false` is sufficient — fresh readings are returned either
+way; the sibling endpoints `JA100/sectionsGet.json` and
+`JA100/programmableGatesGet.json` follow the same pattern.)
 
-## Control API (PGM Output)
-
-**Endpoint**: `POST https://www.jablonet.net/app/ja100/ajax/ovladani2.php`
-
-**Purpose**: Control PGM outputs (turn on/off). Requires a valid session and user's PGM control code.
-
-### Request Headers
-
-Same as stav.php, plus:
-
-```
-Cookie: PHPSESSID=<...>; lastMode=<...>
-```
-
-### Request Body
-
-```
-section=PGM_7&status=1&code=1234&uid=PGM_7_prehled
-```
-
-**Parameters**:
-
-| Parameter | Description |
-|-----------|-------------|
-| `section` | PGM stateName, format: `PGM_{id+1}` (e.g., API key `"6"` → `"PGM_7"`) |
-| `status` | `0` = off/deactivate, `1` = on/activate |
-| `code` | User's 4-digit PGM control PIN code |
-| `uid` | UI identifier, format: `{section}_prehled` |
-
-### Successful Response
+**Response** (abbreviated):
 
 ```json
 {
-  "ts": 1764068250,
-  "id": "PGM_7",
-  "authorization": 200,
-  "result": 1,
-  "responseCode": 200
+  "data": {
+    "service-states": {"events": [{"type": "TROUBLE", "message": "...", "date": "..."}]},
+    "states": [
+      {"object-device-id": "THM-6790417", "temperature": 28,
+       "last-temperature-time": "2026-09-08T15:51:03+02:00"}
+    ]
+  }
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `ts` | Unix timestamp of state change |
-| `id` | PGM stateName that was controlled |
-| `authorization` | `200` = authorized, `403` = wrong code/no permission |
-| `result` | New active state (`0` or `1`) — the authoritative source |
-| `responseCode` | `200` = success, other = control failed |
+**Join key**: the numeric suffix of `object-device-id` equals the
+dataUpdate thermometer segment's `segment_db_id` (`THM-6790417` ↔
+`THERMOMETER_40` "Teplota venku"). A faulty periphery keeps reporting its
+last reading with an old `last-temperature-time` — the value is shown, the
+timestamp attribute reveals its staleness.
 
-### Error Responses
+The client fetches this alongside every `dataUpdate.json` poll; on failure
+it degrades gracefully to the cached dataUpdate values (sensors without a
+cached value are not created).
 
-- **Unauthorized**: `{"authorization": 403, "responseCode": 403}` — wrong PGM code or no permission
-- **Session expired**: `{"status": 300, "url": "..."}` — same as state API
+## Control API (PGM Output)
 
-## PGM Reaction Types
+```
+POST https://api.jablonet.net/api/2.2/controlSegment.json
+Content-Type: application/x-www-form-urlencoded
 
-| Type | Behavior | Controllable | Entity type |
-|------|----------|-------------|-------------|
-| `pgorSwitchOnOff` | Bistable switch — state persists | Yes | Switch (if code + permission) or binary sensor |
-| `pgorPulse` | Momentary pulse — auto-resets to off after short duration | Yes | Switch (if code + permission) or binary sensor |
-| `pgorCopy` | Mirrors another device state (read-only) | No | Binary sensor only |
+service=ja100&serviceId=123456&segmentId=PGM_7&segmentKey=pgm_7&expected_status=set&control_time=0&control_code=1234&system=HomeAssistant
+```
 
-The integration imports `PGM_SWITCHABLE_REACTIONS = ["pgorSwitchOnOff", "pgorPulse"]` from `const.py`.
+| Parameter | Description |
+|-----------|-------------|
+| `service` | `ja100` |
+| `serviceId` | numeric service id |
+| `segmentId` | `PGM_{id+1}` (same stateName as the old web API) |
+| `segmentKey` | lowercased segmentId, e.g. `pgm_7` |
+| `expected_status` | `set` = on, `unset` = off |
+| `control_time` | always `0` |
+| `control_code` | user's PGM control PIN code |
+| `system` | same stable string as in dataUpdate |
+
+**Successful response**: HTTP 200 with `{"status": true}`.
+
+**Failure**: HTTP 200 with `{"status": false, "error_message": "..."}` (e.g.
+wrong code), or HTTP 401 when the session died. The client reports success as
+`{"result": <0|1>, "ts": <unix>}` (legacy `ovladani2.php` shape); the
+authoritative new state arrives with the next poll.
 
 ## PGM ID Mapping
 
-API response keys are 0-based and differ from the stateName:
+Same numbering as the old web API — entity keys are the segment number minus
+one:
 
 ```
-stav.php key "6" → stateName "PGM_7"      (id + 1)
-stav.php key "15" → stateName "PGM_16"    (id + 1)
+dataUpdate segment "PGM_7"  → legacy key "6"
+dataUpdate segment "PGM_16" → legacy key "15"
+dataUpdate segment "STATE_1" → legacy key "0"
 ```
 
-Control API uses stateName format: `section=PGM_{int(pgm_id) + 1}`.
+Temperature sensors keep the legacy zero-padded numbering
+(`THERMOMETER_40` → `"040"`, matching the old `HEAT_40`); thermostats get
+`"t"`-prefixed keys (`THERMOSTAT_1` → `"t001"`) so the two device families
+cannot collide.
+
+## Test Script
+
+`test_jablonet.py` probes this API with real credentials (login, service list,
+raw `dataUpdate.json` dump, extended data_type probes, and the adapted
+legacy-shape summary). It never triggers control calls:
+
+```bash
+python test_jablonet.py <username> <password> [service_id]
+```

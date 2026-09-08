@@ -1,5 +1,12 @@
 # Static REST Sensors (Alternative)
 
+> **⚠️ DEPRECATED — non-functional since the 2026 Jablotron web rework.**
+> The `www.jablonet.net` web endpoints reject non-browser requests (TLS
+> fingerprinting) and the scripted login now hits a reCAPTCHA-protected SSO,
+> so neither the curl cookie recipe nor the REST sensor can work anymore.
+> Use the custom component, which talks to the MyJABLOTRON mobile API
+> (`api.jablonet.net`) — see [api-reference.md](api-reference.md).
+
 A simple YAML-based alternative that uses Home Assistant's built-in REST sensor platform. **No automatic session management** — the user must manually manage the `PHPSESSID` cookie in configuration.
 
 ## When to Use

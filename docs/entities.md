@@ -83,6 +83,14 @@ Each section in the API response creates one `BinarySensorEntity`:
 
 Each PGM output in the API response creates a binary sensor, **unless** all three conditions are met: (1) a `pgm_code` is configured, (2) the PGM reaction type is switchable (`pgorSwitchOnOff` or `pgorPulse`), and (3) the user has control permission. In that case, a switch entity is created instead (see below).
 
+> **v2.2 API note**: the mobile API reports real controllability — a PGM
+> becomes a switch when the segment is flagged `segment_is_controllable`
+> (plus account-level `controls_pgs`/not read-only) **and** a `pgm_code` is
+> configured; non-controllable PGMs (indication outputs, door states) stay
+> binary sensors. The PGM `reaction` type is not reported: everything is
+> treated as bistable, so the pulse non-retry guard cannot be auto-applied
+> to one-directional outputs (e.g. gate PGs).
+
 | Property | Value |
 |----------|-------|
 | Name | `Jablotron {pgm_nazev}` (e.g., "Jablotron Osvětlení") |
@@ -114,6 +122,8 @@ Each PGM output in the API response creates a binary sensor, **unless** all thre
 ## PIR Motion Sensors (`binary_sensor.py`)
 
 **Platform**: `BINARY_SENSOR`
+
+> **Currently unavailable**: the v2.2 mobile API has no known data type that returns PIR motion data (the old web `stav.php` provided it). No PIR entities are created; this section documents the historical behavior and becomes active again if a data source is found. The `test_jablonet.py` probe checks for extended data types.
 
 Each PIR sensor in the API response creates one binary sensor:
 
@@ -192,6 +202,6 @@ When a config entry is set up, all entities from all four platforms are created 
 - + 1 next-update timestamp sensor
 - 1 binary sensor per entry in `sekce` (typically 6–8 sections)
 - N binary sensors or switches per entry in `pgm` (total PGMs minus switchable ones with code), typically 0–10
-- M binary sensors per entry in `pir`, typically 2–8
+- M binary sensors per entry in `pir` (currently always 0 — see the PIR section above)
 
 Entity count is determined at API call time during the first coordinator refresh (which runs before any platform setup).

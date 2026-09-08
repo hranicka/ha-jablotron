@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Home Assistant custom component for Jablotron JA-100 alarm systems, connecting via the [jablonet.net](https://www.jablonet.net) cloud API as an automated browser session.
+Home Assistant custom component for Jablotron JA-100 alarm systems, connecting via the MyJABLOTRON mobile API v2.2 (`api.jablonet.net`) — the same API the official mobile app uses. (The old `www.jablonet.net` web endpoints are closed to non-browser clients since the 2026 web rework.)
 
 ## Core Components
 
@@ -27,11 +27,22 @@ Two handler classes:
 
 ### `jablotron_client.py` — API Client
 
-HTTP wrapper over jablonet.net with automatic session management:
+HTTP wrapper over `api.jablonet.net` (MyJABLOTRON mobile API v2.2) with automatic session management:
 
-- **4-step login**: homepage → login.php → /cloud → /app/ja100
-- **Session recovery**: on session expiry, resets cookies and re-login immediately; if re-login fails, sets a configurable retry delay (default 5 min)
+- **Login**: `userAuthorize.json` establishes a `PHPSESSID` cookie session (request headers imitate the official mobile client — the API validates vendor headers)
+- **Session recovery**: on session expiry (HTTP 401 / `USER.SESSION.EXPIRED`), resets cookies and re-logs-in immediately; if re-login fails or the API keeps failing, sets a configurable retry delay (default 5 min)
 - **Two public methods**: `get_status()` for all sensor data, `control_pgm()` for PGM output control
+- **Service resolution**: uses the configured `service_id`, or auto-discovers the first enabled `JA100` service via `serviceListGet.json`
+- **Live temperatures**: `get_status()` also polls `JA100/thermoDevicesGet.json` — `dataUpdate.json`'s thermometer block is only a stale cache; a failed thermo fetch degrades gracefully to cached values
+
+### `v22_adapter.py` — Payload Translation
+
+Pure functions translating the v2.2 `dataUpdate.json` response into the legacy
+`stav.php`-shaped dict (`sekce`, `pgm`, `teplomery`, `pir`, `permissions`) that
+the platforms consume, preserving the legacy ID numbering (entity unique_ids
+depend on it). This module is the single place that knows about v2.2 payload
+quirks (synthesized PGM reactions/permissions, no PIR source, no per-item
+timestamps).
 
 ### Platform Files
 
@@ -40,7 +51,7 @@ All platforms extend `CoordinatorEntity`, reading from the shared `DataUpdateCoo
 | File | Entities | Data Source |
 |------|----------|-------------|
 | `sensor.py` | Temperature sensors, Next Update timestamp | `teplomery` |
-| `binary_sensor.py` | Alarm sections, PGM status, PIR motion | `sekce`, `pgm`, `pir` |
+| `binary_sensor.py` | Alarm sections, PGM status | `sekce`, `pgm` (PIR data currently unavailable via the v2.2 API — see `docs/entities.md`) |
 | `switch.py` | Controllable PGM outputs | `pgm` (requires pgm_code) |
 | `button.py` | Force update button | N/A (triggers coordinator refresh) |
 
@@ -65,8 +76,8 @@ Home Assistant calls __init__.py::async_setup_entry()
   → JablotronClient(username, password, service_id, pgm_code)
   → DataUpdateCoordinator(update_method=client.get_status, interval=scan_interval)
   → coordinator.async_config_entry_first_refresh()  ← triggers login if needed
-    → session has no cookies? → login() [4-step]
-    → GET /app/ja100/ajax/stav.php → {teplomery, pgm, sekce, pir, permissions}
+    → session has no cookies? → login() [userAuthorize.json]
+    → POST dataUpdate.json → v22_adapter → {teplomery, pgm, sekce, pir, permissions}
   → Forward to all 4 platforms
     → Platforms read coordinator.data to discover entities
   → Register custom services (first entry only)
@@ -102,7 +113,7 @@ The coordinator stores full raw API response in `coordinator.data`. All entities
 
 ## Version Info
 
-- **Component version**: 0.0.35 (manifest.json)
+- **Component version**: 0.1.0 (manifest.json) — API migration to MyJABLOTRON mobile API v2.2
 - **HA minimum**: 2025.12.0 (hacs.json) — `ConfigFlowResult`, automatic `OptionsFlow.config_entry`, and explicit `DataUpdateCoordinator(config_entry=...)`
 - **Integration type**: hub (aggregation, forwards to platforms)
 - **IoT class**: cloud_polling

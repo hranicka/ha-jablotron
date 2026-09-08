@@ -1,4 +1,11 @@
 # Jablotron Sensors Configuration for Home Assistant (Static REST Sensor Alternative)
+#
+# !!! DEPRECATED / NON-FUNCTIONAL since the 2026 Jablotron web rework !!!
+# The www.jablonet.net web endpoints (stav.php) reject non-browser requests,
+# and session cookies can no longer be obtained via a scripted login.
+# Use the custom component instead — it talks to the MyJABLOTRON mobile API.
+# See docs/static-sensors.md and docs/api-reference.md.
+#
 # Add this to your configuration.yaml or include it as a package.
 # See docs/static-sensors.md for full instructions and limitations.
 # Recommended: use the custom component instead (automatic session management).
