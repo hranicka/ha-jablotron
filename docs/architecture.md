@@ -113,7 +113,7 @@ The coordinator stores full raw API response in `coordinator.data`. All entities
 
 ## Version Info
 
-- **Component version**: 0.1.0 (manifest.json) — API migration to MyJABLOTRON mobile API v2.2
+- **Component version**: 0.2.1 (manifest.json) — API migration to MyJABLOTRON mobile API v2.2 shipped as tag 0.2.0
 - **HA minimum**: 2025.12.0 (hacs.json) — `ConfigFlowResult`, automatic `OptionsFlow.config_entry`, and explicit `DataUpdateCoordinator(config_entry=...)`
 - **Integration type**: hub (aggregation, forwards to platforms)
 - **IoT class**: cloud_polling

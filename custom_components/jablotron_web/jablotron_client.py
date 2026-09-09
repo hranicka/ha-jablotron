@@ -468,8 +468,13 @@ class JablotronClient:
 
         if payload.get("status") is False:
             message = payload.get("error_message") or "unknown error"
-            _LOGGER.error("Status fetch failed: %s", message)
-            raise JablotronError(f"Status fetch failed: {message}")
+            # Dead sessions don't always arrive as HTTP 401 — long-lived
+            # sessions have been observed getting HTTP 200 + status:false
+            # with no error code. Route it through session recovery: re-login
+            # fixes the session case, and any other cause just fails the
+            # retry and arms the retry-delay backoff.
+            _LOGGER.error("Status fetch failed: %s (response: %s)", message, text[:200])
+            raise JablotronSessionError(f"Status fetch failed: {message}")
         if status != 200:
             raise JablotronNetworkError(f"Status fetch failed: HTTP {status}")
 

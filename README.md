@@ -2,7 +2,7 @@
 
 Full-featured Home Assistant integration for Jablotron JA-100 alarm systems via the MyJABLOTRON mobile API (`api.jablonet.net`).
 
-> **v0.1.0 — API migration**: the old `www.jablonet.net` web API is closed to
+> **v0.2.0 — API migration**: the old `www.jablonet.net` web API is closed to
 > non-browser clients (Jablotron added bot protection and reCAPTCHA to the
 > web login in 2026). The integration now uses the same API as the official
 > MyJABLOTRON mobile app. Credentials and configuration are unchanged; PIR
